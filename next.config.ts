@@ -4,9 +4,9 @@ const nextConfig: NextConfig = {
   eslint: {
     // إيقاف تحذيرات ESLint أثناء البناء على السحابة
     ignoreDuringBuilds: true,
-  },
+  }, // <--- هذه الفاصلة كانت مفقودة
   typescript: {
-    // تخطي أخطاء TypeScript الصارمة للسماح برفع الموقع
+    // تخطي أخطاء TypeScript للسماح برفع الموقع
     ignoreBuildErrors: true,
   },
 };
