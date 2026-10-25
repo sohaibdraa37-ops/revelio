@@ -7,11 +7,8 @@ export type Currency = "DZD" | "USD" | "EUR";
 export type CurrencyCode = Currency;
 export type DeliveryMode = "manual" | "auto" | "INSTANT_WEB";
 export type SocialPlatform = "WhatsApp" | "Instagram" | "Telegram";
-
-// طرق تسليم وتفعيل المنتجات الثلاث
 export type ActivationMethod = "KEY" | "EMAIL_INVITE" | "ACCOUNT";
 
-// القوالب البصرية لبطاقات المنتجات
 export type ProductTemplateStyle =
   | "cyber_cyan"
   | "emerald_ai"
@@ -19,7 +16,6 @@ export type ProductTemplateStyle =
   | "violet_gaming"
   | "gold_vip";
 
-// صلاحيات الموظفين في لوحة الإدارة
 export type AdminPermission =
   | "orders"
   | "products"
@@ -31,10 +27,18 @@ export type AdminPermission =
   | "settings"
   | "staff";
 
+export interface VisualEffectsConfig {
+  liveCanvas3D: boolean;
+  kineticMarquee: boolean;
+  tilt3DCards: boolean;
+  laserBeams: boolean;
+  hudOverlay: boolean;
+}
+
 export interface StaffMember {
   id: string;
   name: string;
-  roleTitle: string; // مثال: مدير مبيعات، مسؤول تفعيل، دعم فني
+  roleTitle: string;
   pinCode: string;
   permissions: AdminPermission[];
   active: boolean;
@@ -51,11 +55,11 @@ export interface AuthenticatedAdminUser {
 
 export interface PaymentMethodConfig {
   id: string;
-  name: string; // BaridiMob, CCP, USDT, RedotPay
+  name: string;
   labelAr: string;
-  accountValue: string; // RIP أو رقم CCP أو عنوان محفظة USDT
+  accountValue: string;
   accountHolder: string;
-  networkOrNote: string; // مثل TRC20 / BEP20 أو المفتاح
+  networkOrNote: string;
   enabled: boolean;
 }
 
@@ -73,7 +77,7 @@ export interface DigitalProduct {
   name: string;
   category: string;
   duration: string;
-   durationDays?: number;
+  durationDays?: number;
   priceUsd: number;
   priceDzd: number;
   priceEur: number;
@@ -82,7 +86,7 @@ export interface DigitalProduct {
   stockCount: number;
   stock: number;
   deliveryType: "manual" | "auto";
-  activationMethod: ActivationMethod; // KEY = كود | EMAIL_INVITE = دعوة إيميل | ACCOUNT = حساب
+  activationMethod: ActivationMethod;
   templateStyle?: ProductTemplateStyle;
   fulfillmentMode?: "MANUAL_VERIFY" | "INSTANT_WEB";
   badge?: string;
@@ -93,7 +97,7 @@ export interface DigitalProduct {
   features: string[];
   sampleKeys: string[];
   secretCode?: string;
-  imageUrl?: string; // الصورة المقصوصة بأداة القص الاحترافية
+  imageUrl?: string;
   accentColor?: string;
   dailySalesVelocity?: number;
   renewalRate?: number;
@@ -118,7 +122,7 @@ export interface OrderRecord {
   amountDzd: number;
   customerName: string;
   customerContact: string;
-  customerEmail?: string; // يظهر عندما يكون المنتج من نوع دعوة إيميل (EMAIL_INVITE)
+  customerEmail?: string;
   channel: SocialPlatform;
   socialPlatform: SocialPlatform;
   paymentMethod: string;
@@ -128,7 +132,7 @@ export interface OrderRecord {
   deliveredCode?: string;
   notes?: string;
   createdAt: string;
-  expiresAt?: string; // لتتبع انتهاء اشتراك الزبون في الـ CRM
+  expiresAt?: string;
 }
 
 export interface StorePost {
@@ -148,25 +152,28 @@ export interface SiteConfig {
   dzdRate: number;
   eurRate: number;
   globalDeliveryMode: "manual" | "auto";
-  // بيانات الدفع القابلة للتعديل في أي وقت
   ccpAccount: string;
   baridiMobRip: string;
   usdtAddress: string;
   usdtNetwork: string;
   redotpayId: string;
   paymentMethods: PaymentMethodConfig[];
-  // حسابات التواصل الاجتماعي
   whatsappSupport: string;
   instagramPage: string;
   facebookPage: string;
   tiktokPage: string;
   telegramBotUsername: string;
   telegramChannel: string;
-  // إعدادات الذكاء الاصطناعي والبوت (OpenRouter + البدائل)
+  // إعدادات البوت المباشرة (تعمل حتى على localhost)
+  telegramBotToken: string;
+  telegramAdminChatId: string;
+  enableLocalBotPolling: boolean;
+  // إعدادات الذكاء الاصطناعي
   aiProviderMode: "openrouter" | "zerokey" | "smart_rules";
   openrouterApiKey: string;
   openrouterModel: string;
-  // كود الـ CEO السري (MINOU2018) مع دعم الاسمين لمنع أي خطأ في الملفات القديمة
+  // إعدادات المؤثرات الثلاثية الأبعاد والأشعة القابلة للتفعيل والإيقاف
+  visualFx: VisualEffectsConfig;
   adminPin: string;
   masterPin: string;
 }
@@ -284,7 +291,6 @@ export const INITIAL_PROMO_CODES: PromoCodeItem[] = [
   },
 ];
 
-// الكود السري للـ CEO هو MINOU2018 (سري وغير ظاهر للعلن)
 export const CEO_MASTER_CODE = "MINOU2018";
 
 export const INITIAL_STAFF: StaffMember[] = [
@@ -295,7 +301,7 @@ export const INITIAL_STAFF: StaffMember[] = [
     pinCode: "STAFF01",
     permissions: ["orders", "customers", "products"],
     active: true,
-    createdAt: "2026-10-24",
+    createdAt: "2026-10-25",
   },
 ];
 
@@ -320,9 +326,19 @@ export const DEFAULT_SITE_CONFIG: SiteConfig = {
   tiktokPage: "@revelio.digital",
   telegramBotUsername: "REVELIO_ASSISTANT_BOT",
   telegramChannel: "revelio_digital_channel",
+  telegramBotToken: "",
+  telegramAdminChatId: "1399306871",
+  enableLocalBotPolling: true,
   aiProviderMode: "openrouter",
   openrouterApiKey: "",
   openrouterModel: "openrouter/free",
+  visualFx: {
+    liveCanvas3D: true,
+    kineticMarquee: true,
+    tilt3DCards: true,
+    laserBeams: true,
+    hudOverlay: true,
+  },
   adminPin: CEO_MASTER_CODE,
   masterPin: CEO_MASTER_CODE,
 };
@@ -553,7 +569,7 @@ export const INITIAL_POSTS: StorePost[] = [
     content:
       "متوفر الآن تفعيل رسمي بدعوة مباشرة على إيميلك الشخصي مع ضمان ذهبي شامل. اطلب الآن وسنرسل لك التفعيل فور مراجعة الدفع!",
     badge: "عرض الأسبوع",
-    date: "2026-10-24",
+    date: "2026-10-25",
     active: true,
   },
   {
@@ -562,7 +578,7 @@ export const INITIAL_POSTS: StorePost[] = [
     content:
       "يمكنك الآن اختيار وسيلة الدفع الأنسب لك في سلة المشتريات واستلام اشتراكك (سواء كان كوداً، دعوة إيميل، أو حساباً جاهزاً) عبر واتساب أو إنستغرام أو تيليجرام.",
     badge: "تحديث الدفع",
-    date: "2026-10-24",
+    date: "2026-10-25",
     active: true,
   },
 ];
@@ -587,8 +603,8 @@ export const INITIAL_ORDERS: OrderRecord[] = [
     deliveryType: "manual",
     activationMethod: "EMAIL_INVITE",
     deliveredCode: "تم إرسال دعوة التفعيل الرسمي إلى yacine.dz@gmail.com + ضمان 30 يوماً",
-    createdAt: "2026-10-24",
-    expiresAt: "2026-11-23",
+    createdAt: "2026-10-25",
+    expiresAt: "2026-11-24",
   },
 ];
 
@@ -653,7 +669,7 @@ export async function saveProductToSupabase(product: DigitalProduct): Promise<bo
 
 interface RevelioStoreState {
   config: SiteConfig;
-  siteConfig: SiteConfig; // مرادف لـ config لمنع أي خطأ في الملفات التي تستدعي siteConfig.masterPin
+  siteConfig: SiteConfig;
   products: DigitalProduct[];
   posts: StorePost[];
   orders: OrderRecord[];
@@ -728,7 +744,6 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     }
   },
 
-  // التحقق الذكي من كود الدخول: يميز بين الـ CEO (MINOU2018) وبين أكواد الموظفين
   authenticateAdmin: (pinCode) => {
     const cleanPin = pinCode.trim();
     if (!cleanPin) return null;
@@ -949,6 +964,9 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
           };
           if (!parsedCfg.paymentMethods || parsedCfg.paymentMethods.length === 0) {
             parsedCfg.paymentMethods = INITIAL_PAYMENT_METHODS;
+          }
+          if (!parsedCfg.visualFx) {
+            parsedCfg.visualFx = DEFAULT_SITE_CONFIG.visualFx;
           }
           set({ config: parsedCfg, siteConfig: parsedCfg });
         }

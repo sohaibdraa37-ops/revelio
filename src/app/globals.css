@@ -1,14 +1,14 @@
 @import "tailwindcss";
 
 :root {
-  --bg-void: #02050e;
+  --bg-void: #01040b;
   --bg-glass: rgba(6, 14, 32, 0.74);
   --cyan-neon: #00eeff;
   --cyan-bright: #16dcff;
   --blue-electric: #02b0ff;
   --blue-core: #0192fd;
-  --border-glass: rgba(0, 238, 255, 0.16);
-  --border-glow: rgba(0, 238, 255, 0.58);
+  --border-glass: rgba(0, 238, 255, 0.18);
+  --border-glow: rgba(0, 238, 255, 0.65);
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
@@ -27,10 +27,10 @@ body {
   padding: 0;
   background-color: var(--bg-void);
   background-image:
-    radial-gradient(ellipse 85% 55% at 50% -10%, rgba(2, 176, 255, 0.18), transparent 70%),
-    radial-gradient(ellipse 55% 45% at 88% 25%, rgba(0, 238, 255, 0.09), transparent 65%),
+    radial-gradient(ellipse 85% 55% at 50% -10%, rgba(2, 176, 255, 0.16), transparent 70%),
+    radial-gradient(ellipse 55% 45% at 88% 25%, rgba(0, 238, 255, 0.08), transparent 65%),
     radial-gradient(ellipse 60% 50% at 12% 80%, rgba(1, 146, 253, 0.1), transparent 65%),
-    linear-gradient(180deg, #02050e 0%, #040b1c 50%, #02050e 100%);
+    linear-gradient(180deg, #010309 0%, #030917 50%, #010309 100%);
   background-attachment: fixed;
   color: #f8fafc;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -41,81 +41,136 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* شبكة الدوائر الإلكترونية الخلفية */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image:
-    radial-gradient(circle at center, rgba(0, 238, 255, 0.25) 1px, transparent 1.5px),
-    linear-gradient(to right, rgba(0, 238, 255, 0.045) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0, 238, 255, 0.045) 1px, transparent 1px);
-  background-size: 56px 56px;
-  background-position: 0 0, 28px 28px, 28px 28px;
-  mask-image: radial-gradient(ellipse 85% 75% at 50% 35%, black 15%, transparent 82%);
-  -webkit-mask-image: radial-gradient(ellipse 85% 75% at 50% 35%, black 15%, transparent 82%);
+/* ==========================================================================
+   1. الشريط الهولوغرافي العملاق في الخلفية + القائمة ذات النقطة الساطعة (بأسلوب الفيديو)
+   ========================================================================== */
+.cyber-outline-text {
+  color: transparent;
+  -webkit-text-stroke: 1.5px rgba(0, 238, 255, 0.22);
+  text-shadow: 0 0 35px rgba(0, 238, 255, 0.15);
 }
 
-/* الإضاءة المحيطية المتغيرة مع التمرير */
-body::before {
-  content: "";
-  position: fixed;
-  top: 5%;
+.cyber-kinetic-track {
+  width: max-content;
+  animation: cyberMarqueeSlide 38s linear infinite;
+}
+
+@keyframes cyberMarqueeSlide {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+/* النقطة الساطعة تحت عناصر القائمة العلوية عند التمرير (كما في فيديو SKRIKSI) */
+.cyber-nav-link {
+  text-shadow: 0 0 0px transparent;
+  transition: color 0.25s ease, text-shadow 0.25s ease;
+}
+
+.cyber-nav-link:hover {
+  text-shadow: 0 0 14px rgba(0, 238, 255, 0.85);
+}
+
+.cyber-nav-dot {
+  position: absolute;
+  bottom: -6px;
   left: 50%;
-  width: 85vw;
-  max-width: 1050px;
-  height: 550px;
-  transform: translate3d(-50%, 0, 0);
-  pointer-events: none;
-  z-index: 0;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(0, 238, 255, 0.14) 0%,
-    rgba(2, 176, 255, 0.06) 45%,
-    transparent 75%
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background-color: #ffffff;
+  box-shadow: 0 0 10px #00eeff, 0 0 20px #00eeff;
+  transform: translateX(-50%) scale(0);
+  opacity: 0;
+  transition: transform 0.28s var(--ease-spring), opacity 0.25s ease;
+}
+
+.cyber-nav-link:hover .cyber-nav-dot {
+  transform: translateX(-50%) scale(1);
+  opacity: 1;
+}
+
+/* ==========================================================================
+   2. الأشعة الليزرية السيبرانية (Laser Energy Beams)
+   ========================================================================== */
+.cyber-laser-beam-h {
+  position: absolute;
+  left: -30%;
+  width: 55%;
+  height: 1.5px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(2, 176, 255, 0.3),
+    rgba(0, 238, 255, 0.95),
+    #ffffff,
+    rgba(0, 238, 255, 0.95),
+    transparent
   );
-  filter: blur(65px);
-  will-change: transform, opacity;
-  animation: ambientBreathe 9s ease-in-out infinite alternate;
+  box-shadow: 0 0 18px rgba(0, 238, 255, 0.85);
+  opacity: 0.65;
+  animation: laserSweepHorizontal 7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-@supports (animation-timeline: scroll()) {
-  body::before {
-    animation: scrollLightShift linear both;
-    animation-timeline: scroll(root);
-  }
+.cyber-laser-beam-v {
+  position: absolute;
+  top: -35%;
+  width: 1px;
+  height: 45%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(0, 238, 255, 0.75),
+    #ffffff,
+    rgba(0, 238, 255, 0.75),
+    transparent
+  );
+  box-shadow: 0 0 14px rgba(0, 238, 255, 0.75);
+  opacity: 0.45;
+  animation: laserSweepVertical 9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-@keyframes scrollLightShift {
+@keyframes laserSweepHorizontal {
   0% {
-    transform: translate3d(-50%, -8%, 0) scale(1);
-    background: radial-gradient(ellipse at center, rgba(0, 238, 255, 0.16) 0%, rgba(2, 176, 255, 0.06) 45%, transparent 75%);
+    left: -60%;
+    opacity: 0;
   }
-  50% {
-    transform: translate3d(-38%, 18%, 0) scale(1.12);
-    background: radial-gradient(ellipse at center, rgba(2, 176, 255, 0.17) 0%, rgba(56, 189, 248, 0.08) 45%, transparent 75%);
+  15% {
+    opacity: 0.75;
   }
-  100% {
-    transform: translate3d(-58%, 35%, 0) scale(1.05);
-    background: radial-gradient(ellipse at center, rgba(16, 185, 129, 0.14) 0%, rgba(0, 238, 255, 0.08) 45%, transparent 75%);
+  65% {
+    left: 120%;
+    opacity: 0.75;
+  }
+  75%, 100% {
+    left: 120%;
+    opacity: 0;
   }
 }
 
-@keyframes ambientBreathe {
+@keyframes laserSweepVertical {
   0% {
-    transform: translate3d(-52%, -3%, 0) scale(0.96);
-    opacity: 0.65;
+    top: -50%;
+    opacity: 0;
   }
-  100% {
-    transform: translate3d(-48%, 4%, 0) scale(1.06);
-    opacity: 0.95;
+  20% {
+    opacity: 0.55;
+  }
+  70% {
+    top: 120%;
+    opacity: 0.55;
+  }
+  80%, 100% {
+    top: 120%;
+    opacity: 0;
   }
 }
 
 /* ==========================================================================
-   بطاقات Glassmorphism + إضاءة الماوس التفاعلية (Interactive Spotlight)
+   3. بطاقات Glassmorphism + 3D Perspective Tilt + إضاءة الماوس
    ========================================================================== */
 .cyber-card {
   position: relative;
@@ -128,27 +183,27 @@ body::before {
   border: 1px solid var(--border-glass);
   border-radius: 1.25rem;
   box-shadow:
-    0 12px 32px -12px rgba(0, 0, 0, 0.78),
-    0 0 16px rgba(0, 238, 255, 0.03),
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.09);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
+    0 14px 34px -12px rgba(0, 0, 0, 0.82),
+    0 0 18px rgba(0, 238, 255, 0.04),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px) saturate(165%);
+  -webkit-backdrop-filter: blur(20px) saturate(165%);
+  transform-style: preserve-3d;
   transition:
-    transform 0.35s var(--ease-out-expo),
+    transform 0.22s ease-out,
     border-color 0.35s var(--ease-out-expo),
     box-shadow 0.35s var(--ease-out-expo);
   will-change: transform, box-shadow;
   z-index: 2;
 }
 
-/* هالة الضوء التفاعلية التي تتبع مؤشر الماوس داخل كل بطاقة */
 .cyber-card::before {
   content: "";
   position: absolute;
   inset: 0;
   background: radial-gradient(
-    420px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-    rgba(0, 238, 255, 0.13),
+    430px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(0, 238, 255, 0.15),
     transparent 45%
   );
   opacity: 0;
@@ -157,7 +212,6 @@ body::before {
   z-index: 0;
 }
 
-/* خط التوهج العلوي الزجاجي */
 .cyber-card::after {
   content: "";
   position: absolute;
@@ -168,9 +222,9 @@ body::before {
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(0, 238, 255, 0.85),
-    rgba(255, 255, 255, 0.75),
-    rgba(0, 238, 255, 0.85),
+    rgba(0, 238, 255, 0.9),
+    rgba(255, 255, 255, 0.8),
+    rgba(0, 238, 255, 0.9),
     transparent
   );
   opacity: 0;
@@ -180,12 +234,11 @@ body::before {
 }
 
 .cyber-card:hover {
-  transform: translateY(-5px);
   border-color: var(--border-glow);
   box-shadow:
-    0 20px 42px -12px rgba(0, 0, 0, 0.9),
-    0 0 28px rgba(0, 238, 255, 0.18),
-    inset 0 1px 0 0 rgba(0, 238, 255, 0.32);
+    0 24px 48px -12px rgba(0, 0, 0, 0.92),
+    0 0 32px rgba(0, 238, 255, 0.22),
+    inset 0 1px 0 0 rgba(0, 238, 255, 0.35);
 }
 
 .cyber-card:hover::before {
@@ -198,106 +251,9 @@ body::before {
   right: 4%;
 }
 
-/* الانتقالات المتتابعة للأقسام والبطاقات */
-main > section,
-main > div.cyber-card {
-  animation: cyberSectionReveal 0.7s var(--ease-out-expo) both;
-}
-
-main > section:nth-of-type(1) { animation-delay: 0.05s; }
-main > section:nth-of-type(2) { animation-delay: 0.14s; }
-main > section:nth-of-type(3) { animation-delay: 0.22s; }
-main > section:nth-of-type(4) { animation-delay: 0.30s; }
-
-#catalog .grid > .cyber-card {
-  animation: cyberCardStagger 0.65s var(--ease-out-expo) both;
-}
-
-#catalog .grid > .cyber-card:nth-child(1) { animation-delay: 0.05s; }
-#catalog .grid > .cyber-card:nth-child(2) { animation-delay: 0.12s; }
-#catalog .grid > .cyber-card:nth-child(3) { animation-delay: 0.19s; }
-#catalog .grid > .cyber-card:nth-child(4) { animation-delay: 0.26s; }
-#catalog .grid > .cyber-card:nth-child(5) { animation-delay: 0.33s; }
-#catalog .grid > .cyber-card:nth-child(6) { animation-delay: 0.40s; }
-
-@keyframes cyberSectionReveal {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 22px, 0);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
-}
-
-@keyframes cyberCardStagger {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 26px, 0) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-
-/* استجابة الأزرار وانسيابية السلة */
-button,
-a {
-  transition:
-    transform 0.18s var(--ease-out-expo),
-    filter 0.18s ease,
-    background-color 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
-}
-
-button:active:not(:disabled),
-a:active {
-  transform: scale(0.96);
-}
-
-div.fixed.inset-0.z-50 {
-  animation: cyberBackdropFade 0.25s ease forwards;
-}
-
-div.fixed.inset-0.z-50 > div.max-w-md {
-  animation: cyberCartDrawerSlide 0.38s var(--ease-out-expo) forwards;
-}
-
-div.fixed.inset-0.z-50 > div.cyber-card {
-  animation: cyberModalPop 0.35s var(--ease-spring) forwards;
-}
-
-@keyframes cyberBackdropFade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes cyberCartDrawerSlide {
-  from {
-    opacity: 0.6;
-    transform: translate3d(-100%, 0, 0);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
-}
-
-@keyframes cyberModalPop {
-  from {
-    opacity: 0;
-    transform: scale(0.92) translate3d(0, 14px, 0);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translate3d(0, 0, 0);
-  }
-}
-
-/* أنيميشن الشعار الهولوغرافي */
+/* ==========================================================================
+   4. أنيميشن الشعار الهولوغرافي (RevelioLogo SVG System)
+   ========================================================================== */
 .rev-html-logo {
   display: block;
 }
@@ -310,7 +266,7 @@ div.fixed.inset-0.z-50 > div.cyber-card {
   fill: none;
   stroke: #00eeff;
   stroke-width: 26;
-  opacity: 0.2;
+  opacity: 0.22;
   filter: url(#bloom);
   transform-box: fill-box;
   transform-origin: center;
@@ -481,7 +437,7 @@ div.fixed.inset-0.z-50 > div.cyber-card {
     transform: scale(0.97);
   }
   50% {
-    opacity: 0.32;
+    opacity: 0.34;
     transform: scale(1.04);
   }
 }
@@ -566,7 +522,7 @@ div.fixed.inset-0.z-50 > div.cyber-card {
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #02050e;
+  background: #01040b;
 }
 ::-webkit-scrollbar-thumb {
   background: #0c2b47;

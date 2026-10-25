@@ -15,7 +15,6 @@ import {
   Trash2,
   Send,
   Eye,
-  Lock,
   MessageCircle,
   CreditCard,
   Copy,
@@ -38,6 +37,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import RevelioLogo from "./RevelioLogo";
+import CyberVisualEngine from "./CyberVisualEngine";
 import {
   DigitalProduct,
   OrderRecord,
@@ -121,16 +121,13 @@ export default function RevelioStorePage() {
     hydrateFromCloud,
   } = useRevelioStore();
 
-  // حالات الفلترة والبحث والترتيب
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [sortBy, setSortBy] = useState<"featured" | "price_asc" | "price_desc">("featured");
 
-  // النوافذ المنبثقة وسلة المشتريات
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [activeProductModal, setActiveProductModal] = useState<DigitalProduct | null>(null);
 
-  // بيانات إتمام الطلب وخيارات الدفع والتسليم
   const [customerName, setCustomerName] = useState<string>("");
   const [socialPlatform, setSocialPlatform] = useState<SocialPlatform>("WhatsApp");
   const [customerContact, setCustomerContact] = useState<string>("");
@@ -145,7 +142,6 @@ export default function RevelioStorePage() {
   const [isSubmittingOrder, setIsSubmittingOrder] = useState<boolean>(false);
   const [completedOrderModal, setCompletedOrderModal] = useState<OrderRecord | null>(null);
 
-  // حالات فاحص الضمان وتتبع الطلبات
   const [lookupOrderId, setLookupOrderId] = useState<string>("");
   const [lookupContactLast4, setLookupContactLast4] = useState<string>("");
   const [isCheckingOrder, setIsCheckingOrder] = useState<boolean>(false);
@@ -158,7 +154,34 @@ export default function RevelioStorePage() {
     }
   }, [isHydrated, hydrateFromCloud]);
 
-  // وسائل الدفع المفعلة من لوحة الإدارة
+  // جسر السحب التلقائي لبوت تيليجرام (يجعل البوت يرد على /start حتى على localhost!)
+  useEffect(() => {
+    if (!config.enableLocalBotPolling) return;
+    const interval = setInterval(() => {
+      fetch("/api/telegram", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "poll-updates",
+          botToken: config.telegramBotToken,
+          adminChatId: config.telegramAdminChatId,
+          openrouterApiKey: config.openrouterApiKey,
+          openrouterModel: config.openrouterModel,
+          aiProviderMode: config.aiProviderMode,
+        }),
+      }).catch(() => {});
+    }, 3500);
+
+    return () => clearInterval(interval);
+  }, [
+    config.enableLocalBotPolling,
+    config.telegramBotToken,
+    config.telegramAdminChatId,
+    config.openrouterApiKey,
+    config.openrouterModel,
+    config.aiProviderMode,
+  ]);
+
   const activePaymentMethods = useMemo(() => {
     const list = (config.paymentMethods || []).filter((pm) => pm.enabled);
     return list.length > 0
@@ -183,12 +206,10 @@ export default function RevelioStorePage() {
     );
   }, [activePaymentMethods, paymentMethod]);
 
-  // التحقق مما إذا كانت السلة تحتوي على منتج يتطلب دعوة إيميل (EMAIL_INVITE)
   const cartRequiresEmailInvite = useMemo(() => {
     return cart.some((item) => item.product.activationMethod === "EMAIL_INVITE");
   }, [cart]);
 
-  // تنسيق الأسعار حسب العملة
   const formatPrice = (product: DigitalProduct, qty = 1): string => {
     if (currency === "USD") {
       return `$${(product.priceUsd * qty).toFixed(2)}`;
@@ -199,7 +220,6 @@ export default function RevelioStorePage() {
     return `${Math.round(product.priceDzd * qty).toLocaleString()} د.ج`;
   };
 
-  // حساب إجماليات السلة مع الخصم
   const cartTotals = useMemo(() => {
     let rawTotal = 0;
     let totalUsd = 0;
@@ -244,7 +264,6 @@ export default function RevelioStorePage() {
     };
   }, [cart, currency, appliedDiscountPercent]);
 
-  // فلترة وترتيب المنتجات
   const filteredProducts = useMemo(() => {
     const list = products.filter((p) => {
       const matchesCat = selectedCategory === "ALL" || p.category === selectedCategory;
@@ -263,13 +282,27 @@ export default function RevelioStorePage() {
     return list;
   }, [products, selectedCategory, searchQuery, sortBy]);
 
-  // تتبع حركة الماوس داخل البطاقة لتوليد إضاءة Spotlight تفاعلية (2026 UI)
-  const handleCardMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+  // تتبع حركة الماوس لتوليد منظور 3D Tilt وإضاءة Spotlight
+  const handleCard3DMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     e.currentTarget.style.setProperty("--mouse-x", `${x}px`);
     e.currentTarget.style.setProperty("--mouse-y", `${y}px`);
+
+    if (config.visualFx?.tilt3DCards !== false) {
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      const rotateY = ((x - centerX) / centerX) * 6.5;
+      const rotateX = -((y - centerY) / centerY) * 6.5;
+      e.currentTarget.style.transform = `perspective(1000px) rotateX(${rotateX.toFixed(
+        2
+      )}deg) rotateY(${rotateY.toFixed(2)}deg) translateY(-5px)`;
+    }
+  };
+
+  const handleCard3DMouseLeave = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.currentTarget.style.transform = "";
   };
 
   const handleCopy = (text: string) => {
@@ -278,7 +311,6 @@ export default function RevelioStorePage() {
     setTimeout(() => setCopiedText(null), 2000);
   };
 
-  // التحقق من كود البرومو في قائمة الأكواد المتعددة
   const handleApplyPromo = () => {
     const cleanInput = promoInput.trim().toUpperCase();
     if (!cleanInput) return;
@@ -314,7 +346,6 @@ export default function RevelioStorePage() {
     }
   };
 
-  // إتمام الطلب وإرساله إلى الخادم (/api/telegram) وحفظه في Supabase
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) return;
@@ -380,6 +411,8 @@ export default function RevelioStorePage() {
           paymentMethod,
           deliveryType: effectiveDeliveryMode,
           notes: combinedNotes,
+          botToken: config.telegramBotToken,
+          adminChatId: config.telegramAdminChatId,
           openrouterApiKey: config.openrouterApiKey,
           openrouterModel: config.openrouterModel,
           aiProviderMode: config.aiProviderMode,
@@ -391,9 +424,7 @@ export default function RevelioStorePage() {
         if (data.deliveredCode) serverDeliveredCode = data.deliveredCode;
         if (data.status) serverStatus = data.status;
       }
-    } catch (err) {
-      console.warn("Telegram notification warning:", err);
-    }
+    } catch {}
 
     const newOrder: OrderRecord = {
       id: newOrderId,
@@ -428,7 +459,6 @@ export default function RevelioStorePage() {
     setCompletedOrderModal(newOrder);
   };
 
-  // فحص حالة الطلب والضمان
   const handleOrderLookup = async (overrideId?: string) => {
     const target = (overrideId ?? lookupOrderId).trim().toUpperCase();
     if (!target) return;
@@ -487,7 +517,6 @@ export default function RevelioStorePage() {
     );
   }, [orders]);
 
-  // بناء رابط مراسلة المتجر مع رسالة الطلب الجاهزة للزبون بعد إتمام الشراء
   const getCustomerDirectSupportUrl = (ord: OrderRecord) => {
     const msg = `مرحباً إدارة ${config.storeName} ⚡، قمتُ الآن بإرسال طلب جديد:\n• رقم الطلب: ${ord.orderId}\n• المنتج: ${ord.productName}\n• المبلغ: ${ord.totalPrice} (${ord.paymentMethod})\n${
       ord.customerEmail ? `• إيميل الدعوة: ${ord.customerEmail}\n` : ""
@@ -508,7 +537,10 @@ export default function RevelioStorePage() {
       dir="rtl"
       className="min-h-screen text-slate-100 relative selection:bg-cyan-500 selection:text-black"
     >
-      {/* 1. شريط الإعلانات وكود الخصم العلوي */}
+      {/* محرك الـ 3D والخلفية الحية والأشعة المستوحى من الفيديو */}
+      <CyberVisualEngine />
+
+      {/* 1. شريط الإعلانات العلوي */}
       <div className="bg-gradient-to-r from-cyan-950/95 via-sky-900/85 to-cyan-950/95 border-b border-cyan-400/30 px-3 py-2 text-center text-xs sm:text-sm font-medium text-cyan-100 relative z-20">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-center gap-2">
           <Zap className="w-3.5 h-3.5 text-cyan-300 shrink-0 animate-pulse" />
@@ -523,7 +555,7 @@ export default function RevelioStorePage() {
         </div>
       </div>
 
-      {/* 2. شريط التنقل العلوي الزجاجي */}
+      {/* 2. الهيدر السيبراني مع روابط التنقل ذات النقطة المضيئة (بأسلوب الفيديو SKRIKSI) */}
       <header className="sticky top-0 z-30 backdrop-blur-xl bg-slate-950/85 border-b border-cyan-500/20">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
@@ -537,16 +569,41 @@ export default function RevelioStorePage() {
               <div className="font-extrabold tracking-wider text-sm sm:text-xl text-white flex items-center gap-2 truncate">
                 <span>{config.storeName}</span>
                 <span className="hidden sm:inline-block text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
-                  v4.5 PRO
+                  3D ENGINE v5.0
                 </span>
               </div>
               <p className="text-[9px] sm:text-xs font-mono text-cyan-400/90 tracking-widest uppercase truncate">
-                CYBER VERIFIED DELIVERY
+                A MULTIMEDIA DIGITAL UNIVERSE
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2.5 ms-auto sm:ms-0">
+          {/* شريط التنقل المستوحى من الفيديو مع النقطة الساطعة تحت القسم النشط */}
+          <nav className="hidden lg:flex items-center gap-7 text-xs font-mono tracking-widest uppercase">
+            {[
+              { label: "UNIVERSE // الرئيسية", href: "#" },
+              { label: "CATALOG // الاشتراكات", href: "#catalog" },
+              { label: "WARRANTY // الضمان", href: "#warranty-radar" },
+              {
+                label: "AI AGENT // البوت",
+                href: `https://t.me/${config.telegramBotUsername.replace("@", "").trim()}`,
+                external: true,
+              },
+            ].map((nav, i) => (
+              <a
+                key={i}
+                href={nav.href}
+                target={nav.external ? "_blank" : undefined}
+                rel={nav.external ? "noreferrer" : undefined}
+                className="cyber-nav-link group relative py-1 text-slate-300 hover:text-cyan-300 transition font-bold"
+              >
+                <span>{nav.label}</span>
+                <span className="cyber-nav-dot" />
+              </a>
+            ))}
+          </nav>
+
+          <div className="flex items-center gap-1.5 sm:gap-2.5 ms-auto lg:ms-0">
             <div className="flex items-center bg-slate-900/90 border border-cyan-500/30 rounded-full p-0.5 text-[10px] sm:text-[11px] font-mono">
               {(["DZD", "USD", "EUR"] as Currency[]).map((cur) => (
                 <button
@@ -568,7 +625,7 @@ export default function RevelioStorePage() {
               href={`https://t.me/${config.telegramBotUsername.replace("@", "").trim()}`}
               target="_blank"
               rel="noreferrer"
-              className="hidden md:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 text-xs font-bold transition"
+              className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 text-xs font-bold transition"
             >
               <Bot className="w-4 h-4 text-cyan-400" />
               <span>بوت المساعد الذكي</span>
@@ -602,7 +659,8 @@ export default function RevelioStorePage() {
       <main className="max-w-7xl mx-auto px-3 sm:px-6 py-6 sm:py-10 space-y-10 relative z-10">
         {/* 3. شريط البث الحي للعمليات الموثقة */}
         <div
-          onMouseMove={handleCardMouseMove}
+          onMouseMove={handleCard3DMouseMove}
+          onMouseLeave={handleCard3DMouseLeave}
           className="cyber-card px-4 py-3 flex flex-wrap items-center justify-between gap-3"
         >
           <div className="flex items-center gap-2 text-xs sm:text-sm">
@@ -630,16 +688,17 @@ export default function RevelioStorePage() {
           </div>
         </div>
 
-        {/* 4. قسم الـ Hero الرئيسي + الشعار الهولوغرافي المتمركز بدقة */}
-        <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items- stretch">
+        {/* 4. قسم الـ Hero الرئيسي + الشعار الهولوغرافي ثلاثي الأبعاد */}
+        <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
           <div
-            onMouseMove={handleCardMouseMove}
+            onMouseMove={handleCard3DMouseMove}
+            onMouseLeave={handleCard3DMouseLeave}
             className="cyber-card lg:col-span-7 p-5 sm:p-10 flex flex-col justify-between space-y-6"
           >
             <div className="space-y-5">
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-400/30 text-cyan-300 text-xs font-mono">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>REVELIO DIGITAL SOLUTIONS • الجيل الرابع 2026</span>
+                <span>REVELIO 3D DIGITAL UNIVERSE • الجيل الخامس</span>
               </div>
 
               <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black leading-tight text-white">
@@ -682,14 +741,14 @@ export default function RevelioStorePage() {
             </div>
           </div>
 
-          {/* حاوية الشعار مضبوطة على dir="ltr" لمنع انزياح نص REVELIO */}
           <div
             dir="ltr"
-            onMouseMove={handleCardMouseMove}
+            onMouseMove={handleCard3DMouseMove}
+            onMouseLeave={handleCard3DMouseLeave}
             className="cyber-card lg:col-span-5 p-6 flex flex-col items-center justify-center text-center relative overflow-hidden"
           >
             <div className="text-[10px] font-mono tracking-widest text-cyan-400/80 uppercase mb-2">
-              HOLOGRAPHIC NEON EMBLEM // REVELIO v4.5
+              HOLOGRAPHIC 3D EMBLEM // INTERACTIVE CORE
             </div>
             <RevelioLogo
               className="w-56 h-56 sm:w-72 sm:h-72 mx-auto"
@@ -712,7 +771,8 @@ export default function RevelioStorePage() {
                 .map((post) => (
                   <div
                     key={post.id}
-                    onMouseMove={handleCardMouseMove}
+                    onMouseMove={handleCard3DMouseMove}
+                    onMouseLeave={handleCard3DMouseLeave}
                     className="cyber-card p-5 space-y-2 border-r-4 border-r-cyan-400"
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -735,12 +795,9 @@ export default function RevelioStorePage() {
           </section>
         )}
 
-        {/* 6. كتالوج المنتجات الزجاجي مع القوالب والصور المقصوصة */}
+        {/* 6. كتالوج المنتجات الزجاجي ثلاثي الأبعاد */}
         <section id="catalog" className="space-y-6">
-          <div
-            onMouseMove={handleCardMouseMove}
-            className="cyber-card p-4 sm:p-5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4"
-          >
+          <div className="cyber-card p-4 sm:p-5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
             <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0">
               {[
                 { id: "ALL", label: "جميع المنتجات" },
@@ -801,11 +858,11 @@ export default function RevelioStorePage() {
               return (
                 <div
                   key={product.id}
-                  onMouseMove={handleCardMouseMove}
+                  onMouseMove={handleCard3DMouseMove}
+                  onMouseLeave={handleCard3DMouseLeave}
                   className={`cyber-card p-5 flex flex-col justify-between gap-4 group ${tpl.border}`}
                 >
                   <div className="space-y-3.5 relative z-10">
-                    {/* صورة المنتج المقصوصة أو خلفية القالب الهولوغرافي */}
                     {product.imageUrl ? (
                       <div className="relative h-40 w-full rounded-xl overflow-hidden border border-cyan-500/25 bg-slate-950">
                         <img
@@ -850,7 +907,6 @@ export default function RevelioStorePage() {
                       {product.shortDesc || product.description}
                     </p>
 
-                    {/* تفاصيل المدة والضمان وطريقة التفعيل (كود / دعوة إيميل / حساب) */}
                     <div className="pt-1 space-y-1.5 text-xs text-slate-300">
                       <div className="flex items-center gap-2">
                         <Clock className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
@@ -937,7 +993,9 @@ export default function RevelioStorePage() {
 
         {/* 7. قسم فاحص الضمان وتتبع حالة الطلب المؤمّن */}
         <section
-          onMouseMove={handleCardMouseMove}
+          id="warranty-radar"
+          onMouseMove={handleCard3DMouseMove}
+          onMouseLeave={handleCard3DMouseLeave}
           className="cyber-card p-5 sm:p-8 space-y-5"
         >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1049,7 +1107,7 @@ export default function RevelioStorePage() {
         </section>
       </main>
 
-      {/* 8. الفوتر الرسمي مع أيقونات منصات التواصل الجذابة (Instagram, Facebook, TikTok, Telegram, WhatsApp) */}
+      {/* 8. الفوتر الرسمي مع أيقونات منصات التواصل الجذابة */}
       <footer className="border-t border-cyan-500/20 bg-slate-950/95 py-12 px-4 mt-16 relative z-10">
         <div className="max-w-7xl mx-auto flex flex-col items-center text-center space-y-5">
           <div dir="ltr">
@@ -1063,9 +1121,7 @@ export default function RevelioStorePage() {
             تواصل معنا عبر منصاتنا الرسمية أو تحدث مباشرة مع المساعد الذكي على تيليجرام.
           </p>
 
-          {/* أيقونات التواصل الاجتماعي الجذابة والمتوهجة */}
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-            {/* Telegram Bot */}
             <a
               href={`https://t.me/${config.telegramBotUsername.replace("@", "").trim()}`}
               target="_blank"
@@ -1078,7 +1134,6 @@ export default function RevelioStorePage() {
               <span>Telegram Bot</span>
             </a>
 
-            {/* Instagram */}
             <a
               href={`https://instagram.com/${config.instagramPage.replace("@", "").trim()}`}
               target="_blank"
@@ -1091,7 +1146,6 @@ export default function RevelioStorePage() {
               <span>Instagram</span>
             </a>
 
-            {/* Facebook */}
             <a
               href={`https://facebook.com/${(config.facebookPage || "revelio.digital.dz").replace("@", "").trim()}`}
               target="_blank"
@@ -1104,7 +1158,6 @@ export default function RevelioStorePage() {
               <span>Facebook</span>
             </a>
 
-            {/* TikTok */}
             <a
               href={`https://tiktok.com/@${(config.tiktokPage || "revelio.digital").replace("@", "").trim()}`}
               target="_blank"
@@ -1117,7 +1170,6 @@ export default function RevelioStorePage() {
               <span>TikTok</span>
             </a>
 
-            {/* WhatsApp */}
             <a
               href={`https://wa.me/${(config.whatsappSupport || "213550000000").replace(/\D/g, "")}`}
               target="_blank"
@@ -1206,7 +1258,7 @@ export default function RevelioStorePage() {
         </div>
       )}
 
-      {/* 10. درج سلة المشتريات وإتمام الدفع المرن (CCP / BaridiMob / USDT + إيميل الدعوة) */}
+      {/* 10. درج سلة المشتريات */}
       {isCartOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex justify-end">
           <div className="w-full max-w-md bg-slate-950 border-r border-cyan-500/30 h-full flex flex-col justify-between p-5 overflow-y-auto">
@@ -1284,7 +1336,6 @@ export default function RevelioStorePage() {
                     ))}
                   </div>
 
-                  {/* كود الخصم */}
                   <div className="flex gap-2 items-center">
                     <Tag className="w-4 h-4 text-cyan-400 shrink-0" />
                     <input
@@ -1310,7 +1361,6 @@ export default function RevelioStorePage() {
                     </div>
                   )}
 
-                  {/* اختيار وسيلة الدفع وعرض بياناتها الديناميكية */}
                   <div className="space-y-2.5 pt-2 border-t border-cyan-500/20">
                     <label className="text-xs text-cyan-300 font-bold block">
                       💳 اختر وسيلة الدفع المناسبة لك:
@@ -1371,7 +1421,6 @@ export default function RevelioStorePage() {
                     )}
                   </div>
 
-                  {/* نموذج بيانات الزبون + حقل الإيميل التلقائي لمنتجات الدعوة */}
                   <form
                     onSubmit={handleCheckout}
                     className="space-y-3 pt-2 border-t border-cyan-500/20"
@@ -1390,7 +1439,6 @@ export default function RevelioStorePage() {
                       />
                     </div>
 
-                    {/* يظهر تلقائياً إذا كان المنتج يتطلب دعوة إيميل */}
                     {cartRequiresEmailInvite && (
                       <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-400/40 space-y-1.5">
                         <label className="text-xs text-emerald-300 font-bold flex items-center gap-1.5">
@@ -1527,7 +1575,7 @@ export default function RevelioStorePage() {
         </div>
       )}
 
-      {/* 11. نافذة تأكيد الطلب مع زر فتح محادثة المتجر برسالة الطلب الجاهزة */}
+      {/* 11. نافذة تأكيد الطلب */}
       {completedOrderModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
           <div className="cyber-card max-w-md w-full p-6 text-center space-y-4">
