@@ -1,7 +1,33 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
 
-// نضع المفاتيح كخيار بديل لتفادي انهيار البناء في خوادم Cloudflare
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wtekbgfnxnahbgkevurx.supabase.co";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0ZWtiZ2ZueG5haGJna2V2dXJ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI2OTU4MzEsImV4cCI6MjEwODI3MTgzMX0.BCRlItzVevZA2mhoFSXOX7BdPsRZO5Y53RDhszvcihk";
+const supabaseUrl =
+  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wtekbgfnxnahbgkevurx.supabase.co";
+const supabaseAnonKey =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "public-anon-key-placeholder";
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const isSupabaseConfigured = Boolean(
+  process.env.NEXT_PUBLIC_SUPABASE_URL &&
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY &&
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY !== "public-anon-key-placeholder"
+);
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+});
+
+/**
+ * عميل خاص بالخادم (Server API Routes) يستخدم مفتاح Service Role إن وجد
+ * لتنفيذ العمليات الحساسة مثل تسليم الأكواد وتحديث الطلبات من بوت تيليجرام
+ */
+export function getServiceSupabase() {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey;
+  return createClient(supabaseUrl, serviceKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
