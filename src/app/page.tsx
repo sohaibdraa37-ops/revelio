@@ -154,29 +154,50 @@ export default function RevelioStorePage() {
     }
   }, [isHydrated, hydrateFromCloud]);
 
-  // جسر السحب التلقائي لبوت تيليجرام (يجعل البوت يرد على /start حتى على localhost!)
+// اختصار كيبورد سري للـ CEO فقط (Ctrl + Shift + A) للدخول لصفحة الإدارة السرية + منع التكرار على السحابة
   useEffect(() => {
-    if (!config.enableLocalBotPolling) return;
-    const interval = setInterval(() => {
-      fetch("/api/telegram", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "poll-updates",
-          botToken: config.telegramBotToken,
-          adminChatId: config.telegramAdminChatId,
-          openrouterApiKey: config.openrouterApiKey,
-          openrouterModel: config.openrouterModel,
-          aiProviderMode: config.aiProviderMode,
-        }),
-      }).catch(() => {});
-    }, 3500);
+    const handleSecretShortcut = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "a") {
+        window.location.href = "/admin";
+      }
+    };
+    window.addEventListener("keydown", handleSecretShortcut);
 
-    return () => clearInterval(interval);
+    const isLocal =
+      typeof window !== "undefined" &&
+      (window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1");
+
+    let interval: ReturnType<typeof setInterval> | null = null;
+    if (isLocal && config.enableLocalBotPolling) {
+      interval = setInterval(() => {
+        fetch("/api/telegram", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "poll-updates",
+            botToken: config.telegramBotToken,
+            adminChatId: config.telegramAdminChatId,
+            bytezApiKey: config.bytezApiKey,
+            bytezModel: config.bytezModel,
+            openrouterApiKey: config.openrouterApiKey,
+            openrouterModel: config.openrouterModel,
+            aiProviderMode: config.aiProviderMode,
+          }),
+        }).catch(() => {});
+      }, 4500);
+    }
+
+    return () => {
+      window.removeEventListener("keydown", handleSecretShortcut);
+      if (interval) clearInterval(interval);
+    };
   }, [
     config.enableLocalBotPolling,
     config.telegramBotToken,
     config.telegramAdminChatId,
+    config.bytezApiKey,
+    config.bytezModel,
     config.openrouterApiKey,
     config.openrouterModel,
     config.aiProviderMode,
@@ -645,13 +666,7 @@ export default function RevelioStorePage() {
               )}
             </button>
 
-            <Link
-              href="/admin"
-              className="p-2 rounded-full bg-slate-900/80 hover:bg-slate-800 border border-cyan-500/30 text-cyan-300 transition"
-              title="بوابة الإدارة المشفرة"
-            >
-              <SlidersHorizontal className="w-4 h-4" />
-            </Link>
+          
           </div>
         </div>
       </header>

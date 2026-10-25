@@ -15,7 +15,7 @@ interface ParticleNode {
 }
 
 export default function CyberVisualEngine() {
-  const { config, setConfig } = useRevelioStore();
+  const { config, currentAdmin, setConfig } = useRevelioStore();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isFxPanelOpen, setIsFxPanelOpen] = useState<boolean>(false);
 
@@ -36,7 +36,6 @@ export default function CyberVisualEngine() {
     });
   };
 
-  // محرك الخلفية الحية ثلاثية الأبعاد (3D Neural Nodes & Perspective Horizon)
   useEffect(() => {
     if (!fx.liveCanvas3D) return;
     const canvas = canvasRef.current;
@@ -84,7 +83,6 @@ export default function CyberVisualEngine() {
 
       ctx.clearRect(0, 0, width, height);
 
-      // 1. رسم هالة الماوس الفضائية العميقة
       const cursorGrad = ctx.createRadialGradient(
         mouse.x,
         mouse.y,
@@ -99,7 +97,6 @@ export default function CyberVisualEngine() {
       ctx.fillStyle = cursorGrad;
       ctx.fillRect(0, 0, width, height);
 
-      // 2. رسم شبكة المنظور الثلاثي الأبعاد في الأفق السفلي (3D Cyber Horizon)
       const horizonY = height * 0.68;
       const offsetX = ((mouse.x - width / 2) / width) * 90;
 
@@ -125,14 +122,12 @@ export default function CyberVisualEngine() {
         ctx.stroke();
       }
 
-      // 3. تحريك ورسم الجزيئات العصبية المضيئة والروابط الليزرية بينها
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
         n.pulse += 0.03;
         n.x += n.vx * n.z;
         n.y += n.vy * n.z;
 
-        // إزاحة Parallax خفيفة حسب موقع الماوس
         const parallaxX = n.x + ((mouse.x - width / 2) * 0.025) / n.z;
         const parallaxY = n.y + ((mouse.y - height / 2) * 0.025) / n.z;
 
@@ -147,7 +142,6 @@ export default function CyberVisualEngine() {
         ctx.arc(parallaxX, parallaxY, n.size * n.z, 0, Math.PI * 2);
         ctx.fill();
 
-        // ربط العقد القريبة من بعضها أو القريبة من الماوس بخطوط طاقة
         for (let j = i + 1; j < nodes.length; j++) {
           const n2 = nodes[j];
           const p2x = n2.x + ((mouse.x - width / 2) * 0.025) / n2.z;
@@ -195,7 +189,6 @@ export default function CyberVisualEngine() {
 
   return (
     <>
-      {/* 1. الخلفية الحية المتطورة (3D Canvas) */}
       {fx.liveCanvas3D && (
         <canvas
           ref={canvasRef}
@@ -204,7 +197,6 @@ export default function CyberVisualEngine() {
         />
       )}
 
-      {/* 2. الشريط الهولوغرافي العملاق في الخلفية (مستوحى من فيديو SKRIKSI) */}
       {fx.kineticMarquee && (
         <div
           dir="ltr"
@@ -223,7 +215,6 @@ export default function CyberVisualEngine() {
         </div>
       )}
 
-      {/* 3. الأشعة الليزرية والنبضات الضوئية السيبرانية */}
       {fx.laserBeams && (
         <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
           <div className="cyber-laser-beam-h top-[18%]" />
@@ -233,7 +224,6 @@ export default function CyberVisualEngine() {
         </div>
       )}
 
-      {/* 4. إطار الـ HUD السيبراني ومؤشر SCROLL TO EXPLORE (بأسلوب الفيديو) */}
       {fx.hudOverlay && (
         <div
           dir="ltr"
@@ -246,92 +236,94 @@ export default function CyberVisualEngine() {
         </div>
       )}
 
-      {/* 5. زر ولوحة التحكم الفورية بمؤثرات الـ 3D والأشعة (تفعيل / إيقاف متى أردت) */}
-      <div dir="rtl" className="fixed bottom-5 right-5 z-40">
-        {isFxPanelOpen && (
-          <div className="cyber-card mb-3 p-4 w-72 space-y-3 border border-cyan-400/50 shadow-2xl shadow-cyan-500/20">
-            <div className="flex items-center justify-between border-b border-cyan-500/20 pb-2">
-              <div className="flex items-center gap-1.5 text-xs font-black text-cyan-300">
-                <Sparkles className="w-4 h-4" />
-                <span>استوديو المؤثرات 3D الحية</span>
+      {/* لا يظهر زر التحكم بمؤثرات 3D إلا للمدير المسجل دخوله فقط */}
+      {currentAdmin && (
+        <div dir="rtl" className="fixed bottom-5 right-5 z-40">
+          {isFxPanelOpen && (
+            <div className="cyber-card mb-3 p-4 w-72 space-y-3 border border-cyan-400/50 shadow-2xl shadow-cyan-500/20">
+              <div className="flex items-center justify-between border-b border-cyan-500/20 pb-2">
+                <div className="flex items-center gap-1.5 text-xs font-black text-cyan-300">
+                  <Sparkles className="w-4 h-4" />
+                  <span>استوديو المؤثرات 3D (CEO)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsFxPanelOpen(false)}
+                  className="text-xs text-slate-400 hover:text-white cursor-pointer"
+                >
+                  إغلاق
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsFxPanelOpen(false)}
-                className="text-xs text-slate-400 hover:text-white cursor-pointer"
-              >
-                إغلاق
-              </button>
-            </div>
 
-            <div className="space-y-2 text-xs">
-              {[
-                {
-                  key: "liveCanvas3D" as const,
-                  label: "الخلفية الحية 3D والجزيئات",
-                  icon: Layers,
-                },
-                {
-                  key: "kineticMarquee" as const,
-                  label: "الشريط الهولوغرافي الخلفي",
-                  icon: Radio,
-                },
-                {
-                  key: "tilt3DCards" as const,
-                  label: "منظور 3D Tilt للبطاقات والشعار",
-                  icon: Box,
-                },
-                {
-                  key: "laserBeams" as const,
-                  label: "الأشعة الليزرية والنبضات",
-                  icon: Zap,
-                },
-                {
-                  key: "hudOverlay" as const,
-                  label: "مؤشر HUD السيبراني",
-                  icon: Eye,
-                },
-              ].map((item) => {
-                const Icon = item.icon;
-                const active = fx[item.key];
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => toggleEffect(item.key)}
-                    className={`w-full px-3 py-2 rounded-xl border flex items-center justify-between transition cursor-pointer ${
-                      active
-                        ? "bg-cyan-500/20 border-cyan-400 text-white font-bold"
-                        : "bg-slate-900/80 border-slate-800 text-slate-400"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Icon className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>{item.label}</span>
-                    </span>
-                    {active ? (
-                      <span className="text-[10px] font-mono text-emerald-300">
-                        ON ✓
+              <div className="space-y-2 text-xs">
+                {[
+                  {
+                    key: "liveCanvas3D" as const,
+                    label: "الخلفية الحية 3D والجزيئات",
+                    icon: Layers,
+                  },
+                  {
+                    key: "kineticMarquee" as const,
+                    label: "الشريط الهولوغرافي الخلفي",
+                    icon: Radio,
+                  },
+                  {
+                    key: "tilt3DCards" as const,
+                    label: "منظور 3D Tilt للبطاقات والشعار",
+                    icon: Box,
+                  },
+                  {
+                    key: "laserBeams" as const,
+                    label: "الأشعة الليزرية والنبضات",
+                    icon: Zap,
+                  },
+                  {
+                    key: "hudOverlay" as const,
+                    label: "مؤشر HUD السيبراني",
+                    icon: Eye,
+                  },
+                ].map((item) => {
+                  const Icon = item.icon;
+                  const active = fx[item.key];
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => toggleEffect(item.key)}
+                      className={`w-full px-3 py-2 rounded-xl border flex items-center justify-between transition cursor-pointer ${
+                        active
+                          ? "bg-cyan-500/20 border-cyan-400 text-white font-bold"
+                          : "bg-slate-900/80 border-slate-800 text-slate-400"
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Icon className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>{item.label}</span>
                       </span>
-                    ) : (
-                      <EyeOff className="w-3.5 h-3.5 text-slate-500" />
-                    )}
-                  </button>
-                );
-              })}
+                      {active ? (
+                        <span className="text-[10px] font-mono text-emerald-300">
+                          ON ✓
+                        </span>
+                      ) : (
+                        <EyeOff className="w-3.5 h-3.5 text-slate-500" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <button
-          type="button"
-          onClick={() => setIsFxPanelOpen(!isFxPanelOpen)}
-          className="px-4 py-2.5 rounded-full bg-slate-950/90 hover:bg-slate-900 border border-cyan-400/50 text-cyan-300 font-bold text-xs flex items-center gap-2 shadow-lg shadow-cyan-500/25 backdrop-blur-xl cursor-pointer"
-        >
-          <Sliders className="w-4 h-4 text-cyan-400" />
-          <span>مؤثرات 3D والأشعة</span>
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => setIsFxPanelOpen(!isFxPanelOpen)}
+            className="px-4 py-2.5 rounded-full bg-slate-950/90 hover:bg-slate-900 border border-cyan-400/50 text-cyan-300 font-bold text-xs flex items-center gap-2 shadow-lg shadow-cyan-500/25 backdrop-blur-xl cursor-pointer"
+          >
+            <Sliders className="w-4 h-4 text-cyan-400" />
+            <span>مؤثرات 3D (CEO)</span>
+          </button>
+        </div>
+      )}
     </>
   );
 }

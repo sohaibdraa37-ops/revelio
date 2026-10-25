@@ -1901,52 +1901,107 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ب) إعدادات OpenRouter.ai والبوت بدون API */}
+          {/* ب) إعدادات الذكاء الاصطناعي (BYTEZ AI + OpenRouter) وتوكن البوت — حفظ سحابي تلقائي */}
           <div className="cyber-card p-6 space-y-4">
-            <div className="flex items-center gap-2 text-cyan-300 font-black text-lg">
-              <Bot className="w-5 h-5" />
-              <span>
-                إعدادات بوت تيليجرام (@{config.telegramBotUsername}) ومزود الذكاء
-                الاصطناعي (OpenRouter.ai)
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-cyan-300 font-black text-lg">
+                <Bot className="w-5 h-5" />
+                <span>
+                  إعدادات الذكاء الاصطناعي (BYTEZ AI / OpenRouter) وبوت تيليجرام
+                </span>
+              </div>
+              <span className="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-xs font-bold">
+                ☁️ حفظ ومزامنة سحابية تلقائية فور الكتابة ✓
               </span>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="text-xs text-slate-300 block mb-1">
-                  وضع تشغيل البوت والرد على الزبائن:
+                <label className="text-xs text-cyan-300 font-bold block mb-1">
+                  محرك الذكاء الاصطناعي المفضل للبوت:
                 </label>
                 <select
                   value={config.aiProviderMode}
                   onChange={(e) =>
                     setConfig({
                       aiProviderMode: e.target.value as
+                        | "bytez"
                         | "openrouter"
                         | "zerokey"
                         | "smart_rules",
                     })
                   }
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-cyan-200 font-bold"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-400/50 text-xs text-cyan-200 font-bold"
                 >
+                  <option value="bytez">
+                    🔥 BYTEZ AI (محرك Bytez الذكي — موصى به)
+                  </option>
                   <option value="openrouter">
-                    🚀 OpenRouter.ai (مع الرد المحلي والـ Zero-Key كاحتياط)
+                    🚀 OpenRouter.ai (النماذج المجانية)
                   </option>
                   <option value="zerokey">
-                    ⚡ تشغيل مجاني بدون أي مفتاح API (Zero-Key AI)
+                    ⚡ ذكاء مجاني بدون أي مفتاح API (Zero-Key AI)
                   </option>
                   <option value="smart_rules">
-                    🛡️ الرد التلقائي المباشر من جدول الأسعار (بدون AI خارجي)
+                    🛡️ الرد التلقائي السريع من جدول الأسعار فقط
                   </option>
                 </select>
               </div>
 
               <div>
-                <label className="text-xs text-slate-300 block mb-1">
-                  مفتاح OpenRouter API Key (تغيره متى أردت):
+                <label className="text-xs text-amber-300 font-bold block mb-1">
+                  مفتاح BYTEZ API Key (يُحفظ ويعمل تلقائياً):
                 </label>
                 <input
                   type="password"
-                  value={config.openrouterApiKey}
+                  value={config.bytezApiKey || ""}
+                  onChange={(e) =>
+                    setConfig({ bytezApiKey: e.target.value.trim() })
+                  }
+                  placeholder="ضع مفتاح Bytez API Key هنا..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-amber-400/50 text-xs text-white font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-amber-300 font-bold block mb-1">
+                  اسم موديل BYTEZ (مثال: Qwen/Qwen2.5-7B-Instruct):
+                </label>
+                <input
+                  type="text"
+                  value={config.bytezModel || "Qwen/Qwen2.5-7B-Instruct"}
+                  onChange={(e) =>
+                    setConfig({ bytezModel: e.target.value.trim() })
+                  }
+                  placeholder="Qwen/Qwen2.5-7B-Instruct"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-amber-400/50 text-xs text-white font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-cyan-500/15">
+              <div>
+                <label className="text-xs text-slate-300 block mb-1">
+                  توكن بوت تيليجرام (TELEGRAM_BOT_TOKEN):
+                </label>
+                <input
+                  type="password"
+                  value={config.telegramBotToken || ""}
+                  onChange={(e) =>
+                    setConfig({ telegramBotToken: e.target.value.trim() })
+                  }
+                  placeholder="7482910...:AAH..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-white font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-300 block mb-1">
+                  مفتاح OpenRouter API Key (احتياطي):
+                </label>
+                <input
+                  type="password"
+                  value={config.openrouterApiKey || ""}
                   onChange={(e) =>
                     setConfig({ openrouterApiKey: e.target.value.trim() })
                   }
@@ -1957,11 +2012,11 @@ export default function AdminDashboard() {
 
               <div>
                 <label className="text-xs text-slate-300 block mb-1">
-                  نموذج OpenRouter المجاني:
+                  موديل OpenRouter:
                 </label>
                 <input
                   type="text"
-                  value={config.openrouterModel}
+                  value={config.openrouterModel || "openrouter/free"}
                   onChange={(e) =>
                     setConfig({ openrouterModel: e.target.value.trim() })
                   }

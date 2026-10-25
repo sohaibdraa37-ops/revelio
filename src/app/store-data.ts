@@ -164,15 +164,15 @@ export interface SiteConfig {
   tiktokPage: string;
   telegramBotUsername: string;
   telegramChannel: string;
-  // إعدادات البوت المباشرة (تعمل حتى على localhost)
   telegramBotToken: string;
   telegramAdminChatId: string;
   enableLocalBotPolling: boolean;
-  // إعدادات الذكاء الاصطناعي
-  aiProviderMode: "openrouter" | "zerokey" | "smart_rules";
+  // إعدادات الذكاء الاصطناعي الشاملة (Bytez + OpenRouter + Zero-Key)
+  aiProviderMode: "bytez" | "openrouter" | "zerokey" | "smart_rules";
+  bytezApiKey: string;
+  bytezModel: string;
   openrouterApiKey: string;
   openrouterModel: string;
-  // إعدادات المؤثرات الثلاثية الأبعاد والأشعة القابلة للتفعيل والإيقاف
   visualFx: VisualEffectsConfig;
   adminPin: string;
   masterPin: string;
@@ -189,6 +189,8 @@ export interface UnitEconomicsResult {
   hoursUntilStockout: number;
   expectedLtvUsd: number;
 }
+
+export const CLOUD_STATE_ROW_ID = "__REVELIO_CLOUD_SYNC__";
 
 export function createUniqueId(prefix = "ORD"): string {
   const randomPart = Math.floor(100000 + Math.random() * 900000);
@@ -328,8 +330,10 @@ export const DEFAULT_SITE_CONFIG: SiteConfig = {
   telegramChannel: "revelio_digital_channel",
   telegramBotToken: "",
   telegramAdminChatId: "1399306871",
-  enableLocalBotPolling: true,
-  aiProviderMode: "openrouter",
+  enableLocalBotPolling: false,
+  aiProviderMode: "bytez",
+  bytezApiKey: "",
+  bytezModel: "Qwen/Qwen2.5-7B-Instruct",
   openrouterApiKey: "",
   openrouterModel: "openrouter/free",
   visualFx: {
@@ -608,6 +612,61 @@ export const INITIAL_ORDERS: OrderRecord[] = [
   },
 ];
 
+/**
+ * حفظ ومزامنة حالة المتجر بالكامل (المنتجات، الإعدادات، مفاتيح الـ API، المنشورات، البرومو)
+ * في السحابة ليراها أي زائر يفتح رابط Cloudflare من أي جهاز آخر
+ */
+async function syncFullStateToCloud(state: {
+  config: SiteConfig;
+  products: DigitalProduct[];
+  posts: StorePost[];
+  promoCodes: PromoCodeItem[];
+}): Promise<boolean> {
+  try {
+    // 1. المزامنة عبر Server API لضمان تحديث إعدادات البوت والـ AI في الخادم فوراً
+    fetch("/api/telegram", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "sync-cloud-state",
+        cloudState: {
+          config: state.config,
+          products: state.products,
+          posts: state.posts,
+          promoCodes: state.promoCodes,
+        },
+      }),
+    }).catch(() => {});
+
+    // 2. الحفظ المباشر في جدول products بالسحابة (يعمل على الأعمدة الـ 4 الأساسية دائماً)
+    if (isSupabaseConfigured) {
+      const payloadJson = JSON.stringify({
+        config: state.config,
+        products: state.products,
+        posts: state.posts,
+        promoCodes: state.promoCodes,
+        updatedAt: new Date().toISOString(),
+      });
+
+      await supabase.from("products").upsert(
+        [
+          {
+            id: CLOUD_STATE_ROW_ID,
+            title: "__SYSTEM_CLOUD_STATE__",
+            category: "SYSTEM",
+            duration: payloadJson,
+          },
+        ],
+        { onConflict: "id" }
+      );
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function saveOrderToSupabase(order: OrderRecord): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
   try {
@@ -620,14 +679,6 @@ export async function saveOrderToSupabase(order: OrderRecord): Promise<boolean> 
             ? `${order.customerContact} | Email: ${order.customerEmail}`
             : order.customerContact,
           channel: order.socialPlatform || order.channel,
-          product_id: order.productId || "",
-          product_title: order.productName || order.productTitle,
-          amount_usd: order.amountUsd || 4,
-          amount_dzd: order.amountDzd || 950,
-          payment_method: order.paymentMethod,
-          delivery_type: order.deliveryType,
-          status: order.status.toUpperCase(),
-          delivered_key: order.deliveredCode || "",
         },
       ],
       { onConflict: "order_id" }
@@ -641,6 +692,7 @@ export async function saveOrderToSupabase(order: OrderRecord): Promise<boolean> 
 export async function saveProductToSupabase(product: DigitalProduct): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
   try {
+    // محاولة الحفظ بجميع الأعمدة، وإذا لم تكن الأعمدة الإضافية موجودة نحفظ بالأعمدة الـ 4 الأساسية
     const { error } = await supabase.from("products").upsert(
       [
         {
@@ -648,15 +700,6 @@ export async function saveProductToSupabase(product: DigitalProduct): Promise<bo
           title: product.title || product.name,
           category: product.category,
           duration: product.duration,
-          price_usd: product.priceUsd,
-          cost_usd: product.costUsd || Number((product.priceUsd * 0.55).toFixed(2)),
-          stock_count: product.stockCount ?? product.stock,
-          delivery_type: product.deliveryType,
-          badge: product.badge || "متوفر ⚡",
-          description: product.shortDesc || product.description,
-          features: product.features,
-          image_url: product.imageUrl || "",
-          accent_color: product.accentColor || "#00eeff",
         },
       ],
       { onConflict: "id" }
@@ -679,6 +722,7 @@ interface RevelioStoreState {
   cart: CartItem[];
   currency: Currency;
   isHydrated: boolean;
+  lastCloudSyncAt: string;
   setConfig: (cfg: Partial<SiteConfig>) => void;
   authenticateAdmin: (pinCode: string) => AuthenticatedAdminUser | null;
   logoutAdmin: () => void;
@@ -730,6 +774,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
   cart: [],
   currency: "DZD",
   isHydrated: false,
+  lastCloudSyncAt: "",
 
   setConfig: (partial) => {
     const updated: SiteConfig = {
@@ -738,10 +783,20 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
       adminPin: CEO_MASTER_CODE,
       masterPin: CEO_MASTER_CODE,
     };
-    set({ config: updated, siteConfig: updated });
+    set({
+      config: updated,
+      siteConfig: updated,
+      lastCloudSyncAt: new Date().toLocaleTimeString(),
+    });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_config", JSON.stringify(updated));
     }
+    syncFullStateToCloud({
+      config: updated,
+      products: get().products,
+      posts: get().posts,
+      promoCodes: get().promoCodes,
+    });
   },
 
   authenticateAdmin: (pinCode) => {
@@ -810,6 +865,12 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_promos", JSON.stringify(updated));
     }
+    syncFullStateToCloud({
+      config: get().config,
+      products: get().products,
+      posts: get().posts,
+      promoCodes: updated,
+    });
   },
 
   togglePromoCode: (id) => {
@@ -820,6 +881,12 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_promos", JSON.stringify(updated));
     }
+    syncFullStateToCloud({
+      config: get().config,
+      products: get().products,
+      posts: get().posts,
+      promoCodes: updated,
+    });
   },
 
   removePromoCode: (id) => {
@@ -828,6 +895,12 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_promos", JSON.stringify(updated));
     }
+    syncFullStateToCloud({
+      config: get().config,
+      products: get().products,
+      posts: get().posts,
+      promoCodes: updated,
+    });
   },
 
   setProducts: (prods) => {
@@ -843,16 +916,28 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     const updated = exists
       ? current.map((p) => (p.id === prod.id ? prod : p))
       : [prod, ...current];
-    set({ products: updated });
+    set({
+      products: updated,
+      lastCloudSyncAt: new Date().toLocaleTimeString(),
+    });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_products", JSON.stringify(updated));
     }
     await saveProductToSupabase(prod);
+    await syncFullStateToCloud({
+      config: get().config,
+      products: updated,
+      posts: get().posts,
+      promoCodes: get().promoCodes,
+    });
   },
 
   removeProduct: async (id) => {
     const updated = get().products.filter((p) => p.id !== id);
-    set({ products: updated });
+    set({
+      products: updated,
+      lastCloudSyncAt: new Date().toLocaleTimeString(),
+    });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_products", JSON.stringify(updated));
     }
@@ -861,13 +946,25 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
         await supabase.from("products").delete().eq("id", id);
       } catch {}
     }
+    await syncFullStateToCloud({
+      config: get().config,
+      products: updated,
+      posts: get().posts,
+      promoCodes: get().promoCodes,
+    });
   },
 
   setPosts: (posts) => {
-    set({ posts });
+    set({ posts, lastCloudSyncAt: new Date().toLocaleTimeString() });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_posts", JSON.stringify(posts));
     }
+    syncFullStateToCloud({
+      config: get().config,
+      products: get().products,
+      posts,
+      promoCodes: get().promoCodes,
+    });
   },
 
   setOrders: (orders) => {
@@ -900,17 +997,6 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     set({ orders: updated });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_orders", JSON.stringify(updated));
-    }
-    if (isSupabaseConfigured) {
-      try {
-        await supabase
-          .from("orders")
-          .update({
-            status: normalizedStatus,
-            ...(deliveredCode ? { delivered_key: deliveredCode } : {}),
-          })
-          .eq("order_id", orderId);
-      } catch {}
     }
   },
 
@@ -952,6 +1038,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
   },
 
   hydrateFromCloud: async () => {
+    // 1. قراءة النسخة المحلية السريعة أولاً
     if (typeof window !== "undefined") {
       try {
         const cfg = localStorage.getItem("revelio_config");
@@ -962,12 +1049,6 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
             adminPin: CEO_MASTER_CODE,
             masterPin: CEO_MASTER_CODE,
           };
-          if (!parsedCfg.paymentMethods || parsedCfg.paymentMethods.length === 0) {
-            parsedCfg.paymentMethods = INITIAL_PAYMENT_METHODS;
-          }
-          if (!parsedCfg.visualFx) {
-            parsedCfg.visualFx = DEFAULT_SITE_CONFIG.visualFx;
-          }
           set({ config: parsedCfg, siteConfig: parsedCfg });
         }
 
@@ -991,114 +1072,49 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
       } catch {}
     }
 
-    if (isSupabaseConfigured) {
-      try {
-        const { data: dbProducts } = await supabase
-          .from("products")
-          .select(
-            "id, title, category, duration, price_usd, cost_usd, stock_count, delivery_type, badge, description, features, image_url, accent_color"
-          );
-
-        if (dbProducts && dbProducts.length > 0) {
-          const rate = get().config.dzdRate || 245;
-          const localMap = new Map(get().products.map((lp) => [lp.id, lp]));
-
-          const mapped: DigitalProduct[] = dbProducts.map(
-            (p: Record<string, unknown>) => {
-              const idStr = String(p.id || "");
-              const existingLocal = localMap.get(idStr);
-              const usd = Number(p.price_usd || 4);
-              const dzd = existingLocal?.priceDzd || Math.round(usd * rate);
-
-              return {
-                id: idStr,
-                title: String(p.title || "منتج رقمي"),
-                name: String(p.title || "منتج رقمي"),
-                category: String(p.category || "AI"),
-                duration: String(p.duration || "شهر كامل"),
-                durationDays: existingLocal?.durationDays || 30,
-                priceUsd: usd,
-                priceDzd: dzd,
-                priceEur: Number((usd * 0.92).toFixed(2)),
-                costUsd: Number(p.cost_usd || usd * 0.55),
-                stockCount: Number(p.stock_count ?? 15),
-                stock: Number(p.stock_count ?? 15),
-                deliveryType: p.delivery_type === "auto" ? "auto" : "manual",
-                activationMethod: existingLocal?.activationMethod || "KEY",
-                templateStyle: existingLocal?.templateStyle || "cyber_cyan",
-                fulfillmentMode:
-                  p.delivery_type === "auto" ? "INSTANT_WEB" : "MANUAL_VERIFY",
-                badge: String(p.badge || "متوفر ⚡"),
-                warranty: "ضمان ذهبي شامل",
-                shortDesc: String(
-                  p.description || "تفعيل رسمي ومضمون من Revelio Digital."
-                ),
-                description: String(
-                  p.description || "تفعيل رسمي ومضمون من Revelio Digital."
-                ),
-                details:
-                  existingLocal?.details ||
-                  String(p.description || "اشتراك رقمي أصلي مع ضمان كامل."),
-                features: Array.isArray(p.features)
-                  ? (p.features as string[])
-                  : [
-                      "تفعيل رسمي 100%",
-                      "ضمان ذهبي شامل",
-                      "دعم فني عبر واتساب وتيليجرام",
-                    ],
-                sampleKeys: [],
-                imageUrl: String(p.image_url || existingLocal?.imageUrl || ""),
-                accentColor: String(p.accent_color || "#00eeff"),
-              };
-            }
-          );
-          set({ products: mapped });
+    // 2. جلب الحالة السحابية الموحدة من الخادم/Supabase ليظهر كل منتج جديد لأي صديق يفتح الرابط
+    try {
+      const res = await fetch("/api/telegram?action=get-cloud-state");
+      if (res.ok) {
+        const data = (await res.json()) as {
+          cloudState?: {
+            config?: Partial<SiteConfig>;
+            products?: DigitalProduct[];
+            posts?: StorePost[];
+            promoCodes?: PromoCodeItem[];
+          };
+        };
+        if (data.cloudState) {
+          if (
+            Array.isArray(data.cloudState.products) &&
+            data.cloudState.products.length > 0
+          ) {
+            set({ products: data.cloudState.products });
+          }
+          if (
+            Array.isArray(data.cloudState.posts) &&
+            data.cloudState.posts.length > 0
+          ) {
+            set({ posts: data.cloudState.posts });
+          }
+          if (
+            Array.isArray(data.cloudState.promoCodes) &&
+            data.cloudState.promoCodes.length > 0
+          ) {
+            set({ promoCodes: data.cloudState.promoCodes });
+          }
+          if (data.cloudState.config) {
+            const mergedConfig: SiteConfig = {
+              ...get().config,
+              ...data.cloudState.config,
+              adminPin: CEO_MASTER_CODE,
+              masterPin: CEO_MASTER_CODE,
+            };
+            set({ config: mergedConfig, siteConfig: mergedConfig });
+          }
         }
-
-        const { data: dbOrders } = await supabase
-          .from("orders")
-          .select("*")
-          .order("created_at", { ascending: false });
-
-        if (dbOrders && dbOrders.length > 0) {
-          const mappedOrders: OrderRecord[] = dbOrders.map(
-            (o: Record<string, unknown>) => {
-              const rawContact = String(o.customer_contact || "");
-              const parts = rawContact.split("| Email:");
-              const contactClean = parts[0]?.trim() || "";
-              const emailClean = parts[1]?.trim() || undefined;
-              const createdStr = o.created_at
-                ? String(o.created_at).split("T")[0]
-                : new Date().toISOString().split("T")[0];
-
-              return {
-                id: String(o.order_id || o.id),
-                orderId: String(o.order_id || o.id),
-                productId: String(o.product_id || ""),
-                productName: String(o.product_title || "اشتراك رقمي"),
-                productTitle: String(o.product_title || "اشتراك رقمي"),
-                totalPrice: o.amount_dzd
-                  ? `${o.amount_dzd} د.ج`
-                  : `$${o.amount_usd || 4}`,
-                amountUsd: Number(o.amount_usd || 4),
-                amountDzd: Number(o.amount_dzd || 950),
-                customerName: String(o.customer_name || "عميل Revelio"),
-                customerContact: contactClean,
-                customerEmail: emailClean,
-                channel: (o.channel as SocialPlatform) || "WhatsApp",
-                socialPlatform: (o.channel as SocialPlatform) || "WhatsApp",
-                paymentMethod: String(o.payment_method || "BaridiMob"),
-                status: String(o.status || "PENDING").toUpperCase() as OrderRecord["status"],
-                deliveryType: o.delivery_type === "auto" ? "auto" : "manual",
-                deliveredCode: String(o.delivered_key || ""),
-                createdAt: createdStr,
-              };
-            }
-          );
-          set({ orders: mappedOrders });
-        }
-      } catch {}
-    }
+      }
+    } catch {}
 
     set({ isHydrated: true });
   },
