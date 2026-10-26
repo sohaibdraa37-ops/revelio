@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import Link from "next/link";
 import {
   ShoppingCart,
   ShieldCheck,
@@ -21,7 +20,6 @@ import {
   Check,
   Bot,
   Megaphone,
-  SlidersHorizontal,
   Flame,
   Star,
   AlertCircle,
@@ -48,6 +46,8 @@ import {
   calculateUnitEconomics,
   createUniqueId,
 } from "./store-data";
+
+const BUILTIN_BOT_TOKEN = "8784273242:AAE9UimGpyjpFhWnNzaoZuEZajHtAyM6EOU";
 
 interface VerifyApiResponse {
   found: boolean;
@@ -154,7 +154,7 @@ export default function RevelioStorePage() {
     }
   }, [isHydrated, hydrateFromCloud]);
 
-// اختصار كيبورد سري للـ CEO فقط (Ctrl + Shift + A) للدخول لصفحة الإدارة السرية + منع التكرار على السحابة
+  // اختصار كيبورد سري للـ CEO فقط (Ctrl + Shift + A) + تشغيل البوت التلقائي على localhost
   useEffect(() => {
     const handleSecretShortcut = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "a") {
@@ -169,15 +169,15 @@ export default function RevelioStorePage() {
         window.location.hostname === "127.0.0.1");
 
     let interval: ReturnType<typeof setInterval> | null = null;
-    if (isLocal && config.enableLocalBotPolling) {
+    if (isLocal) {
       interval = setInterval(() => {
         fetch("/api/telegram", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "poll-updates",
-            botToken: config.telegramBotToken,
-            adminChatId: config.telegramAdminChatId,
+            botToken: config.telegramBotToken || BUILTIN_BOT_TOKEN,
+            adminChatId: config.telegramAdminChatId || "1399306871",
             bytezApiKey: config.bytezApiKey,
             bytezModel: config.bytezModel,
             openrouterApiKey: config.openrouterApiKey,
@@ -185,7 +185,7 @@ export default function RevelioStorePage() {
             aiProviderMode: config.aiProviderMode,
           }),
         }).catch(() => {});
-      }, 4500);
+      }, 4000);
     }
 
     return () => {
@@ -193,7 +193,6 @@ export default function RevelioStorePage() {
       if (interval) clearInterval(interval);
     };
   }, [
-    config.enableLocalBotPolling,
     config.telegramBotToken,
     config.telegramAdminChatId,
     config.bytezApiKey,
@@ -303,7 +302,6 @@ export default function RevelioStorePage() {
     return list;
   }, [products, selectedCategory, searchQuery, sortBy]);
 
-  // تتبع حركة الماوس لتوليد منظور 3D Tilt وإضاءة Spotlight
   const handleCard3DMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -314,8 +312,8 @@ export default function RevelioStorePage() {
     if (config.visualFx?.tilt3DCards !== false) {
       const centerX = rect.width / 2;
       const centerY = rect.height / 2;
-      const rotateY = ((x - centerX) / centerX) * 6.5;
-      const rotateX = -((y - centerY) / centerY) * 6.5;
+      const rotateY = ((x - centerX) / centerX) * 6;
+      const rotateX = -((y - centerY) / centerY) * 6;
       e.currentTarget.style.transform = `perspective(1000px) rotateX(${rotateX.toFixed(
         2
       )}deg) rotateY(${rotateY.toFixed(2)}deg) translateY(-5px)`;
@@ -432,8 +430,10 @@ export default function RevelioStorePage() {
           paymentMethod,
           deliveryType: effectiveDeliveryMode,
           notes: combinedNotes,
-          botToken: config.telegramBotToken,
-          adminChatId: config.telegramAdminChatId,
+          botToken: config.telegramBotToken || BUILTIN_BOT_TOKEN,
+          adminChatId: config.telegramAdminChatId || "1399306871",
+          bytezApiKey: config.bytezApiKey,
+          bytezModel: config.bytezModel,
           openrouterApiKey: config.openrouterApiKey,
           openrouterModel: config.openrouterModel,
           aiProviderMode: config.aiProviderMode,
@@ -558,7 +558,7 @@ export default function RevelioStorePage() {
       dir="rtl"
       className="min-h-screen text-slate-100 relative selection:bg-cyan-500 selection:text-black"
     >
-      {/* محرك الـ 3D والخلفية الحية والأشعة المستوحى من الفيديو */}
+      {/* محرك الـ 3D والخلفية الحية والأشعة */}
       <CyberVisualEngine />
 
       {/* 1. شريط الإعلانات العلوي */}
@@ -576,7 +576,7 @@ export default function RevelioStorePage() {
         </div>
       </div>
 
-      {/* 2. الهيدر السيبراني مع روابط التنقل ذات النقطة المضيئة (بأسلوب الفيديو SKRIKSI) */}
+      {/* 2. الهيدر السيبراني (بدون أي زر ظاهر للوحة الإدارة السرية) */}
       <header className="sticky top-0 z-30 backdrop-blur-xl bg-slate-950/85 border-b border-cyan-500/20">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
@@ -590,7 +590,7 @@ export default function RevelioStorePage() {
               <div className="font-extrabold tracking-wider text-sm sm:text-xl text-white flex items-center gap-2 truncate">
                 <span>{config.storeName}</span>
                 <span className="hidden sm:inline-block text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
-                  3D ENGINE v5.0
+                  3D ENGINE v6.0
                 </span>
               </div>
               <p className="text-[9px] sm:text-xs font-mono text-cyan-400/90 tracking-widest uppercase truncate">
@@ -599,7 +599,6 @@ export default function RevelioStorePage() {
             </div>
           </div>
 
-          {/* شريط التنقل المستوحى من الفيديو مع النقطة الساطعة تحت القسم النشط */}
           <nav className="hidden lg:flex items-center gap-7 text-xs font-mono tracking-widest uppercase">
             {[
               { label: "UNIVERSE // الرئيسية", href: "#" },
@@ -665,8 +664,6 @@ export default function RevelioStorePage() {
                 </span>
               )}
             </button>
-
-          
           </div>
         </div>
       </header>
@@ -713,7 +710,7 @@ export default function RevelioStorePage() {
             <div className="space-y-5">
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-400/30 text-cyan-300 text-xs font-mono">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>REVELIO 3D DIGITAL UNIVERSE • الجيل الخامس</span>
+                <span>REVELIO 3D DIGITAL UNIVERSE • الجيل السادس</span>
               </div>
 
               <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black leading-tight text-white">
@@ -810,7 +807,7 @@ export default function RevelioStorePage() {
           </section>
         )}
 
-        {/* 6. كتالوج المنتجات الزجاجي ثلاثي الأبعاد */}
+        {/* 6. كتالوج المنتجات بالكبسولات الزجاجية ثلاثية الأبعاد */}
         <section id="catalog" className="space-y-6">
           <div className="cyber-card p-4 sm:p-5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
             <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0">
@@ -878,40 +875,73 @@ export default function RevelioStorePage() {
                   className={`cyber-card p-5 flex flex-col justify-between gap-4 group ${tpl.border}`}
                 >
                   <div className="space-y-3.5 relative z-10">
-                    {product.imageUrl ? (
-                      <div className="relative h-40 w-full rounded-xl overflow-hidden border border-cyan-500/25 bg-slate-950">
+                    {/* كبسولة عرض صورة المنتج ذات الطابع الزجاجي الفاخر (3D Glassmorphism Showcase Pod) */}
+                    <div className="relative h-48 w-full rounded-2xl overflow-hidden border border-white/15 bg-slate-950/80 shadow-[inset_0_1px_1px_rgba(255,255,255,0.25),0_12px_28px_-8px_rgba(0,0,0,0.85)] group/img">
+                      {/* هالة إضاءة نيون خلفية ناعمة تحت الزجاج */}
+                      <div
+                        className="absolute -inset-6 opacity-35 blur-2xl transition duration-500 group-hover:opacity-65 pointer-events-none"
+                        style={{
+                          background: `radial-gradient(circle at center, ${
+                            product.accentColor || "#00eeff"
+                          }, transparent 70%)`,
+                        }}
+                      />
+
+                      {product.imageUrl ? (
                         <img
                           src={product.imageUrl}
                           alt={product.title || product.name}
-                          className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+                          className={`relative z-10 w-full h-full ${
+                            product.imageFitMode === "contain"
+                              ? "object-contain p-2.5"
+                              : "object-cover"
+                          } group-hover:scale-105 transition duration-700 ease-out`}
                         />
-                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent" />
-                      </div>
-                    ) : (
-                      <div
-                        className={`h-2.5 w-full rounded-full bg-gradient-to-r ${tpl.glow}`}
-                      />
-                    )}
+                      ) : (
+                        /* تصميم زجاجي هولوغرافي تلقائي للمنتجات التي ليس لها صورة مرفوعة */
+                        <div className="relative z-10 w-full h-full flex flex-col items-center justify-center p-4 text-center select-none">
+                          <div
+                            className="w-16 h-16 rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl flex items-center justify-center shadow-lg group-hover:scale-110 transition duration-500"
+                            style={{
+                              boxShadow: `0 0 25px ${product.accentColor || "#00eeff"}35`,
+                            }}
+                          >
+                            <Sparkles
+                              className="w-8 h-8"
+                              style={{ color: product.accentColor || "#00eeff" }}
+                            />
+                          </div>
+                          <span className="mt-2.5 text-[11px] font-mono tracking-widest uppercase text-cyan-200/80">
+                            {product.category} // VERIFIED EDITION
+                          </span>
+                        </div>
+                      )}
 
-                    <div className="flex items-center justify-between gap-2">
-                      <span
-                        className={`px-2.5 py-1 rounded-full border text-[11px] font-bold flex items-center gap-1 ${tpl.badgeBg}`}
-                      >
-                        <Star className="w-3 h-3" />
-                        {product.badge || product.category}
-                      </span>
-                      <span
-                        className={`text-[11px] font-mono flex items-center gap-1 ${
-                          stockVal <= 5 ? "text-amber-400" : "text-emerald-400"
+                      {/* طبقة انعكاس الزجاج العلوية (Glass Specular Reflection) */}
+                      <div className="absolute inset-0 z-20 pointer-events-none bg-gradient-to-tr from-slate-950/75 via-transparent to-white/10" />
+                      <div className="absolute -inset-full top-0 z-20 block h-full w-1/2 -skew-x-12 bg-gradient-to-r from-transparent to-white/15 opacity-0 group-hover:opacity-100 group-hover:translate-x-[260%] transition-all duration-1000 pointer-events-none" />
+
+                      {/* شارة زجاجية عائمة أعلى الصورة */}
+                      <div className="absolute top-3 right-3 z-30 px-2.5 py-1 rounded-full backdrop-blur-md bg-slate-950/70 border border-white/15 text-[10px] font-bold text-white flex items-center gap-1 shadow-md">
+                        <Star className="w-3 h-3 text-cyan-400" />
+                        <span>{product.badge || product.category}</span>
+                      </div>
+
+                      {/* شارة المخزون الزجاجية العائمة */}
+                      <div
+                        className={`absolute bottom-3 left-3 z-30 px-2.5 py-1 rounded-full backdrop-blur-md bg-slate-950/75 border border-white/15 text-[10px] font-mono flex items-center gap-1 ${
+                          stockVal <= 5 ? "text-amber-300" : "text-emerald-300"
                         }`}
                       >
-                        <Flame className="w-3.5 h-3.5" />
-                        {stockVal <= 0
-                          ? "نفد المخزون"
-                          : stockVal <= 5
-                          ? `ينفد خلال ~${econ.hoursUntilStockout} ساعة (${stockVal})`
-                          : `متوفر (${stockVal})`}
-                      </span>
+                        <Flame className="w-3 h-3" />
+                        <span>
+                          {stockVal <= 0
+                            ? "نفد المخزون"
+                            : stockVal <= 5
+                            ? `ينفد خلال ~${econ.hoursUntilStockout} ساعة (${stockVal})`
+                            : `متوفر (${stockVal})`}
+                        </span>
+                      </div>
                     </div>
 
                     <h3 className="text-lg font-extrabold text-white group-hover:text-cyan-300 transition">
@@ -1215,11 +1245,17 @@ export default function RevelioStorePage() {
             </button>
 
             {activeProductModal.imageUrl && (
-              <img
-                src={activeProductModal.imageUrl}
-                alt={activeProductModal.title}
-                className="w-full h-44 object-cover rounded-xl border border-cyan-500/30"
-              />
+              <div className="relative h-52 w-full rounded-2xl overflow-hidden border border-white/20 bg-slate-950">
+                <img
+                  src={activeProductModal.imageUrl}
+                  alt={activeProductModal.title}
+                  className={`w-full h-full ${
+                    activeProductModal.imageFitMode === "contain"
+                      ? "object-contain p-3"
+                      : "object-cover"
+                  }`}
+                />
+              </div>
             )}
 
             <div className="space-y-2 pr-1">

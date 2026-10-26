@@ -1,16 +1,8 @@
 import { NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase";
 
-// إجبار Next.js و Cloudflare على عدم تخزين أي كاش أبداً لكي تظهر المنشورات على الهاتف فوراً
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-const CLOUD_STATE_ROW_ID = "__REVELIO_CLOUD_SYNC__";
-
-let isPollingLock = false;
-let webhookDeletedForLocal = false;
-const processedUpdateIds = new Set<number>();
-const processedMessageKeys = new Map<string, number>();
 
 interface CloudSyncedProduct {
   id: string;
@@ -48,10 +40,28 @@ interface CloudSyncedState {
   promoCodes?: Array<{ code: string; discountPercent: number; active: boolean }>;
 }
 
-let cachedCloudState: CloudSyncedState | null = null;
+// حفظ حالة البوت في globalThis لمنع تكرار الرسائل حتى أثناء إعادة التحميل السريع في Next.js
+const globalForBot = globalThis as unknown as {
+  __revelioPollingLock?: boolean;
+  __revelioWebhookCleared?: boolean;
+  __revelioProcessedIds?: Set<number>;
+  __revelioProcessedKeys?: Map<string, number>;
+  __revelioLastOffset?: number;
+  __revelioCachedCloud?: CloudSyncedState | null;
+};
+
+if (!globalForBot.__revelioProcessedIds) {
+  globalForBot.__revelioProcessedIds = new Set<number>();
+}
+if (!globalForBot.__revelioProcessedKeys) {
+  globalForBot.__revelioProcessedKeys = new Map<string, number>();
+}
+if (globalForBot.__revelioLastOffset === undefined) {
+  globalForBot.__revelioLastOffset = 0;
+}
 
 let runtimeBotConfig = {
-  botToken: process.env.TELEGRAM_BOT_TOKEN || "",
+  botToken: process.env.TELEGRAM_BOT_TOKEN || "8784273242:AAE9UimGpyjpFhWnNzaoZuEZajHtAyM6EOU",
   adminChatId: String(process.env.TELEGRAM_CHAT_ID || "1399306871"),
   botUsername: process.env.TELEGRAM_BOT_USERNAME || "REVELIO_ASSISTANT_BOT",
   aiMode: "bytez" as "bytez" | "openrouter" | "zerokey" | "smart_rules",
@@ -59,7 +69,6 @@ let runtimeBotConfig = {
   bytezModel: process.env.BYTEZ_MODEL || "Qwen/Qwen2.5-7B-Instruct",
   openrouterApiKey: process.env.OPENROUTER_API_KEY || "",
   openrouterModel: process.env.OPENROUTER_MODEL || "openrouter/free",
-  lastUpdateOffset: 0,
 };
 
 const chatMemory = new Map<
@@ -78,52 +87,53 @@ function appendMemory(
   chatMemory.set(chatId, history);
 }
 
-// قراءة أحدث المنتجات والمنشورات والإعدادات من جدول orders الخالي من قيود Foreign Key
-async function loadCloudStateFromSupabase(): Promise<CloudSyncedState | null> {
+// قراءة أحدث حالة للمتجر من جدول site_config (الصف id = 1)
+async function loadCloudStateFromSiteConfig(): Promise<CloudSyncedState | null> {
   try {
     const supabase = getServiceSupabase();
     const { data } = await supabase
-      .from("orders")
-      .select("customer_contact")
-      .eq("order_id", CLOUD_STATE_ROW_ID)
+      .from("site_config")
+      .select("hero_subtitle")
+      .eq("id", 1)
       .maybeSingle();
 
     if (
       data &&
-      typeof (data as Record<string, unknown>).customer_contact === "string"
+      typeof (data as Record<string, unknown>).hero_subtitle === "string"
     ) {
-      const parsed = JSON.parse(
-        String((data as Record<string, unknown>).customer_contact)
-      ) as CloudSyncedState;
-      cachedCloudState = parsed;
+      const rawJson = String((data as Record<string, unknown>).hero_subtitle);
+      if (rawJson.startsWith("{")) {
+        const parsed = JSON.parse(rawJson) as CloudSyncedState;
+        globalForBot.__revelioCachedCloud = parsed;
 
-      if (parsed.config) {
-        if (parsed.config.telegramBotToken) {
-          runtimeBotConfig.botToken = parsed.config.telegramBotToken;
+        if (parsed.config) {
+          if (parsed.config.telegramBotToken) {
+            runtimeBotConfig.botToken = parsed.config.telegramBotToken;
+          }
+          if (parsed.config.telegramAdminChatId) {
+            runtimeBotConfig.adminChatId = parsed.config.telegramAdminChatId;
+          }
+          if (parsed.config.aiProviderMode) {
+            runtimeBotConfig.aiMode = parsed.config.aiProviderMode;
+          }
+          if (parsed.config.bytezApiKey) {
+            runtimeBotConfig.bytezApiKey = parsed.config.bytezApiKey;
+          }
+          if (parsed.config.bytezModel) {
+            runtimeBotConfig.bytezModel = parsed.config.bytezModel;
+          }
+          if (parsed.config.openrouterApiKey) {
+            runtimeBotConfig.openrouterApiKey = parsed.config.openrouterApiKey;
+          }
+          if (parsed.config.openrouterModel) {
+            runtimeBotConfig.openrouterModel = parsed.config.openrouterModel;
+          }
         }
-        if (parsed.config.telegramAdminChatId) {
-          runtimeBotConfig.adminChatId = parsed.config.telegramAdminChatId;
-        }
-        if (parsed.config.aiProviderMode) {
-          runtimeBotConfig.aiMode = parsed.config.aiProviderMode;
-        }
-        if (parsed.config.bytezApiKey) {
-          runtimeBotConfig.bytezApiKey = parsed.config.bytezApiKey;
-        }
-        if (parsed.config.bytezModel) {
-          runtimeBotConfig.bytezModel = parsed.config.bytezModel;
-        }
-        if (parsed.config.openrouterApiKey) {
-          runtimeBotConfig.openrouterApiKey = parsed.config.openrouterApiKey;
-        }
-        if (parsed.config.openrouterModel) {
-          runtimeBotConfig.openrouterModel = parsed.config.openrouterModel;
-        }
+        return parsed;
       }
-      return parsed;
     }
   } catch {}
-  return cachedCloudState;
+  return globalForBot.__revelioCachedCloud || null;
 }
 
 interface TelegramUpdateObject {
@@ -200,6 +210,8 @@ function buildSmartLocalReply(
     q.includes("سلام") ||
     q.includes("مرحبا") ||
     q.includes("اهلا") ||
+    q.includes("hi") ||
+    q.includes("hello") ||
     q.includes("salem") ||
     q.includes("salam")
   ) {
@@ -385,37 +397,14 @@ async function askHybridAIAgent(
   };
 }
 
-// ============================================================================
-// دالة إرسال رسائل تيليجرام المضادة للأخطاء (إذا فشل Markdown بسبب _ ترسل نصاً صافياً فوراً)
-// ============================================================================
 async function sendTelegramMessage(
   botToken: string,
   chatId: string | number,
   text: string,
   replyMarkup?: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  const firstTry = await fetch(
-    `https://api.telegram.org/bot${botToken}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: "Markdown",
-        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-      }),
-    }
-  );
-
-  const firstData = (await firstTry.json()) as Record<string, unknown>;
-  if (firstData.ok) {
-    return firstData;
-  }
-
-  // إذا رفض تيليجرام الرسالة بسبب رمز _ أو * غير مغلق، نعيد إرسالها فوراً كنص صافي مضمون 100%
   const cleanPlainText = text.replace(/[*`]/g, "");
-  const secondTry = await fetch(
+  const res = await fetch(
     `https://api.telegram.org/bot${botToken}/sendMessage`,
     {
       method: "POST",
@@ -427,7 +416,7 @@ async function sendTelegramMessage(
       }),
     }
   );
-  return (await secondTry.json()) as Record<string, unknown>;
+  return (await res.json()) as Record<string, unknown>;
 }
 
 async function processSingleTelegramUpdate(
@@ -435,15 +424,14 @@ async function processSingleTelegramUpdate(
   botToken: string,
   adminChatId: string
 ) {
+  const processedIds = globalForBot.__revelioProcessedIds!;
+  const processedKeys = globalForBot.__revelioProcessedKeys!;
+
   if (update.update_id) {
-    if (processedUpdateIds.has(update.update_id)) {
+    if (processedIds.has(update.update_id)) {
       return;
     }
-    processedUpdateIds.add(update.update_id);
-    if (processedUpdateIds.size > 500) {
-      const firstId = processedUpdateIds.values().next().value;
-      if (firstId !== undefined) processedUpdateIds.delete(firstId);
-    }
+    processedIds.add(update.update_id);
   }
 
   if (update.message?.text) {
@@ -451,15 +439,15 @@ async function processSingleTelegramUpdate(
       update.message.message_id || update.message.text
     }`;
     const now = Date.now();
-    const lastTime = processedMessageKeys.get(dedupKey) || 0;
-    if (now - lastTime < 4500) {
+    const lastTime = processedKeys.get(dedupKey) || 0;
+    if (now - lastTime < 8000) {
       return;
     }
-    processedMessageKeys.set(dedupKey, now);
+    processedKeys.set(dedupKey, now);
   }
 
   const supabase = getServiceSupabase();
-  const cloudState = await loadCloudStateFromSupabase();
+  const cloudState = await loadCloudStateFromSiteConfig();
 
   if (update.callback_query) {
     const callbackData = String(update.callback_query.data || "");
@@ -592,7 +580,7 @@ async function processSingleTelegramUpdate(
         await sendTelegramMessage(
           botToken,
           chatId,
-          `🧾 تفاصيل الطلب ${ord.order_id}:\n• العميل: ${ord.customer_name}\n• تفاصيل التواصل والمنتج: ${ord.customer_contact}\n• المنصة: ${
+          `🧾 تفاصيل الطلب ${ord.order_id}:\n• العميل: ${ord.customer_name}\n• التفاصيل: ${ord.customer_contact}\n• المنصة: ${
             ord.channel || "WhatsApp"
           }`,
           getCustomerInteractiveKeyboard()
@@ -615,7 +603,6 @@ async function processSingleTelegramUpdate(
         const { data: pending } = await supabase
           .from("orders")
           .select("*")
-          .neq("order_id", CLOUD_STATE_ROW_ID)
           .limit(10);
 
         if (!pending || pending.length === 0) {
@@ -720,10 +707,10 @@ export async function POST(req: Request) {
     }
 
     // ------------------------------------------------------------------------
-    // أ) حفظ ومزامنة حالة المتجر بالكامل داخل جدول orders (مضمون بدون قيود Foreign Key)
+    // أ) حفظ حالة المتجر داخل جدول site_config (الصف id = 1)
     // ------------------------------------------------------------------------
     if (body.action === "sync-cloud-state" && body.cloudState) {
-      cachedCloudState = body.cloudState;
+      globalForBot.__revelioCachedCloud = body.cloudState;
       const cfg = body.cloudState.config;
       if (cfg) {
         if (cfg.telegramBotToken) runtimeBotConfig.botToken = cfg.telegramBotToken;
@@ -743,16 +730,17 @@ export async function POST(req: Request) {
         }
       }
 
-      const { error } = await supabase.from("orders").upsert(
+      const { error } = await supabase.from("site_config").upsert(
         [
           {
-            order_id: CLOUD_STATE_ROW_ID,
-            customer_name: "__SYSTEM_CLOUD_STATE__",
-            customer_contact: JSON.stringify(body.cloudState),
-            channel: "SYSTEM",
+            id: 1,
+            store_name: cfg?.storeName || "REVELIO DIGITAL",
+            store_tagline: new Date().toISOString(),
+            hero_title_highlight: "REVELIO_CLOUD_V6",
+            hero_subtitle: JSON.stringify(body.cloudState),
           },
         ],
-        { onConflict: "order_id" }
+        { onConflict: "id" }
       );
 
       return NextResponse.json({
@@ -762,7 +750,7 @@ export async function POST(req: Request) {
       });
     }
 
-    await loadCloudStateFromSupabase();
+    await loadCloudStateFromSiteConfig();
 
     const botToken =
       urlToken ||
@@ -774,25 +762,49 @@ export async function POST(req: Request) {
       String(process.env.TELEGRAM_CHAT_ID || "1399306871");
 
     // ------------------------------------------------------------------------
-    // ب) وضع السحب المحلي للبوت (يرد فوراً على الرسائل)
+    // ب) اختبار إرسال رسالة فورية لتليجرام
+    // ------------------------------------------------------------------------
+    if (body.action === "send-test") {
+      if (!botToken) {
+        return NextResponse.json({
+          ok: false,
+          error:
+            "يرجى لصق توكن البوت (TELEGRAM_BOT_TOKEN) في خانة التوكن أولاً!",
+        });
+      }
+      const testRes = await sendTelegramMessage(
+        botToken,
+        adminChatId,
+        "🚀 اختبار ناجح! بوت REVELIO DIGITAL متصل الآن وجاهز للرد على الرسائل واستقبال الطلبات الفورية!",
+        getCustomerInteractiveKeyboard()
+      );
+      return NextResponse.json({
+        ok: Boolean(testRes.ok),
+        error: testRes.description ? String(testRes.description) : undefined,
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // ج) وضع السحب المحلي المزود بقفل globalThis لمنع التكرار
     // ------------------------------------------------------------------------
     if (body.action === "poll-updates") {
       if (!botToken) {
         return NextResponse.json({ ok: false, error: "Missing token" });
       }
-      if (isPollingLock) {
+      if (globalForBot.__revelioPollingLock) {
         return NextResponse.json({ ok: true, locked: true });
       }
 
-      isPollingLock = true;
+      globalForBot.__revelioPollingLock = true;
       try {
-        if (!webhookDeletedForLocal) {
+        if (!globalForBot.__revelioWebhookCleared) {
           await fetch(`https://api.telegram.org/bot${botToken}/deleteWebhook`);
-          webhookDeletedForLocal = true;
+          globalForBot.__revelioWebhookCleared = true;
         }
 
+        const offset = globalForBot.__revelioLastOffset || 0;
         const pollRes = await fetch(
-          `https://api.telegram.org/bot${botToken}/getUpdates?offset=${runtimeBotConfig.lastUpdateOffset}&timeout=1`,
+          `https://api.telegram.org/bot${botToken}/getUpdates?offset=${offset}&timeout=1`,
           { cache: "no-store" }
         );
         const pollData = (await pollRes.json()) as {
@@ -804,21 +816,21 @@ export async function POST(req: Request) {
           for (const upd of pollData.result) {
             if (
               upd.update_id &&
-              upd.update_id >= runtimeBotConfig.lastUpdateOffset
+              upd.update_id >= (globalForBot.__revelioLastOffset || 0)
             ) {
-              runtimeBotConfig.lastUpdateOffset = upd.update_id + 1;
+              globalForBot.__revelioLastOffset = upd.update_id + 1;
             }
             await processSingleTelegramUpdate(upd, botToken, adminChatId);
           }
         }
         return NextResponse.json({ ok: true });
       } finally {
-        isPollingLock = false;
+        globalForBot.__revelioPollingLock = false;
       }
     }
 
     // ------------------------------------------------------------------------
-    // ج) فحص حالة الطلب والضمان
+    // د) فحص حالة الطلب والضمان
     // ------------------------------------------------------------------------
     if (body.action === "verify-order") {
       const orderIdInput = String(body.orderId || "").trim().toUpperCase();
@@ -870,7 +882,7 @@ export async function POST(req: Request) {
     }
 
     // ------------------------------------------------------------------------
-    // د) إرسال نشرة إخبارية عبر البوت
+    // هـ) إرسال نشرة إخبارية عبر البوت
     // ------------------------------------------------------------------------
     if (body.action === "broadcast-newsletter") {
       if (!botToken) {
@@ -887,7 +899,7 @@ export async function POST(req: Request) {
     }
 
     // ------------------------------------------------------------------------
-    // هـ) معالجة طلبات الـ Webhook القادمة من تيليجرام
+    // و) معالجة طلبات الـ Webhook القادمة من تيليجرام
     // ------------------------------------------------------------------------
     const isTelegramUpdate = Boolean(
       body.update_id || body.message || body.callback_query
@@ -900,7 +912,7 @@ export async function POST(req: Request) {
     }
 
     // ------------------------------------------------------------------------
-    // و) استلام طلب شراء جديد من واجهة المتجر
+    // ز) استلام طلب شراء جديد من واجهة المتجر
     // ------------------------------------------------------------------------
     const {
       orderId = `ORD-${Math.floor(100000 + Math.random() * 900000)}`,
@@ -1037,9 +1049,8 @@ export async function GET(req: Request) {
     runtimeBotConfig.botToken = tokenParam.trim();
   }
 
-  // إرجاع الحالة السحابية الموحدة مع ترويسة منع الكاش نهائياً للهواتف
   if (action === "get-cloud-state") {
-    const state = await loadCloudStateFromSupabase();
+    const state = await loadCloudStateFromSiteConfig();
     return NextResponse.json(
       { ok: true, cloudState: state, timestamp: Date.now() },
       {
@@ -1050,7 +1061,7 @@ export async function GET(req: Request) {
     );
   }
 
-  await loadCloudStateFromSupabase();
+  await loadCloudStateFromSiteConfig();
   const botToken =
     tokenParam ||
     runtimeBotConfig.botToken ||
@@ -1072,7 +1083,7 @@ export async function GET(req: Request) {
     const origin = new URL(req.url).origin;
     if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
       await fetch(`https://api.telegram.org/bot${botToken}/deleteWebhook`);
-      webhookDeletedForLocal = true;
+      globalForBot.__revelioWebhookCleared = true;
       return NextResponse.json({
         ok: true,
         telegramResponse: {
@@ -1083,7 +1094,6 @@ export async function GET(req: Request) {
       });
     }
 
-    // تمرير التوكن في رابط الـ Webhook نفسه لضمان عمل البوت على Cloudflare بنسبة 100%
     const webhookUrl = `${origin}/api/telegram?token=${encodeURIComponent(
       botToken
     )}`;
@@ -1107,7 +1117,7 @@ export async function GET(req: Request) {
   }
 
   return NextResponse.json({
-    status: "Revelio Digital AI Bot Engine v5.5 Active",
+    status: "Revelio Digital AI Bot Engine v6.0 Active",
     bot: `@${runtimeBotConfig.botUsername}`,
     aiMode: runtimeBotConfig.aiMode,
   });

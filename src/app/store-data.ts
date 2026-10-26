@@ -98,6 +98,7 @@ export interface DigitalProduct {
   sampleKeys: string[];
   secretCode?: string;
   imageUrl?: string;
+  imageFitMode?: "cover" | "contain";
   accentColor?: string;
   dailySalesVelocity?: number;
   renewalRate?: number;
@@ -188,8 +189,6 @@ export interface UnitEconomicsResult {
   hoursUntilStockout: number;
   expectedLtvUsd: number;
 }
-
-export const CLOUD_STATE_ROW_ID = "__REVELIO_CLOUD_SYNC__";
 
 export function createUniqueId(prefix = "ORD"): string {
   const randomPart = Math.floor(100000 + Math.random() * 900000);
@@ -329,7 +328,7 @@ export const DEFAULT_SITE_CONFIG: SiteConfig = {
   telegramChannel: "revelio_digital_channel",
   telegramBotToken: "",
   telegramAdminChatId: "1399306871",
-  enableLocalBotPolling: true, // مفعل افتراضياً ليرد البوت فوراً
+  enableLocalBotPolling: true,
   aiProviderMode: "bytez",
   bytezApiKey: "",
   bytezModel: "Qwen/Qwen2.5-7B-Instruct",
@@ -612,29 +611,31 @@ export const INITIAL_ORDERS: OrderRecord[] = [
 ];
 
 /**
- * الحفظ السحابي المضمون 100% داخل جدول orders (لأنه لا يحتوي على أي قيود Foreign Key)
- * بحيث يظهر أي منتج أو منشور جديد على الهاتف وأجهزة الأصدقاء فوراً
+ * الحفظ السحابي المضمون 100% داخل جدول site_config (الصف id = 1)
+ * بالأعمدة الحقيقية: id, store_name, store_tagline, hero_title_highlight, hero_subtitle
  */
-async function syncFullStateToCloud(state: {
+async function syncFullStateToSiteConfig(state: {
   config: SiteConfig;
   products: DigitalProduct[];
   posts: StorePost[];
   promoCodes: PromoCodeItem[];
   orders?: OrderRecord[];
-}): Promise<boolean> {
+  staff?: StaffMember[];
+}): Promise<{ ok: boolean; message: string }> {
   const payloadObj = {
     config: state.config,
     products: state.products,
     posts: state.posts,
     promoCodes: state.promoCodes,
-    orders: (state.orders || []).filter((o) => o.orderId !== CLOUD_STATE_ROW_ID),
+    orders: state.orders || [],
+    staff: state.staff || [],
     updatedAt: new Date().toISOString(),
   };
 
   const payloadJson = JSON.stringify(payloadObj);
 
+  // 1. إرسال نسخة إلى مسار الخادم لتحديث البوت والـ AI فوراً
   try {
-    // 1. إرسال إلى API الخادم لتحديث البوت وقاعدة البيانات من الخادم أيضاً
     fetch("/api/telegram", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -644,26 +645,50 @@ async function syncFullStateToCloud(state: {
         cloudState: payloadObj,
       }),
     }).catch(() => {});
+  } catch {}
 
-    // 2. الحفظ المباشر في جدول orders بالأعمدة الـ 4 الأساسية الموجودة في قاعدة بياناتك
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.from("orders").upsert(
+  // 2. الحفظ المباشر في جدول site_config (صف رقم 1) الذي يمتلك سياسة RLS مفعلة
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase.from("site_config").upsert(
         [
           {
-            order_id: CLOUD_STATE_ROW_ID,
-            customer_name: "__SYSTEM_CLOUD_STATE__",
-            customer_contact: payloadJson,
-            channel: "SYSTEM",
+            id: 1,
+            store_name: state.config.storeName || "REVELIO DIGITAL",
+            store_tagline: new Date().toISOString(),
+            hero_title_highlight: "REVELIO_CLOUD_V6",
+            hero_subtitle: payloadJson,
           },
         ],
-        { onConflict: "order_id" }
+        { onConflict: "id" }
       );
-      return !error;
+
+      if (!error) {
+        return {
+          ok: true,
+          message:
+            "✅ تم الحفظ في سحابة Supabase (جدول site_config صف رقم 1) بنجاح! سيظهر على الهاتف ولجميع الزوار فوراً.",
+        };
+      }
+      return {
+        ok: false,
+        message: `⚠️ خطأ من Supabase: ${error.message}`,
+      };
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        message: `⚠️ تعذر الاتصال بـ Supabase: ${
+          err instanceof Error ? err.message : "Network error"
+        }`,
+      };
     }
-    return false;
-  } catch {
-    return false;
   }
+
+  return {
+    ok: false,
+    message:
+      "⚠️ تنبيه: مفتاح NEXT_PUBLIC_SUPABASE_ANON_KEY غير مضاف في src/lib/supabase.ts؛ تم الحفظ محلياً فقط.",
+  };
 }
 
 export async function saveOrderToSupabase(order: OrderRecord): Promise<boolean> {
@@ -688,26 +713,6 @@ export async function saveOrderToSupabase(order: OrderRecord): Promise<boolean> 
   }
 }
 
-export async function saveProductToSupabase(product: DigitalProduct): Promise<boolean> {
-  if (!isSupabaseConfigured) return false;
-  try {
-    // حفظ في جدول products مع جعل category فارغاً (null) لتجنب خطأ الـ Foreign Key
-    const { error } = await supabase.from("products").upsert(
-      [
-        {
-          id: product.id,
-          title: product.title || product.name,
-          duration: product.duration,
-        },
-      ],
-      { onConflict: "id" }
-    );
-    return !error;
-  } catch {
-    return false;
-  }
-}
-
 interface RevelioStoreState {
   config: SiteConfig;
   siteConfig: SiteConfig;
@@ -721,19 +726,20 @@ interface RevelioStoreState {
   currency: Currency;
   isHydrated: boolean;
   lastCloudSyncAt: string;
-  setConfig: (cfg: Partial<SiteConfig>) => void;
+  cloudSyncStatus: string;
+  setConfig: (cfg: Partial<SiteConfig>) => Promise<void>;
   authenticateAdmin: (pinCode: string) => AuthenticatedAdminUser | null;
   logoutAdmin: () => void;
-  addStaffMember: (member: StaffMember) => void;
-  updateStaffMember: (member: StaffMember) => void;
-  removeStaffMember: (id: string) => void;
-  addPromoCode: (promo: PromoCodeItem) => void;
-  togglePromoCode: (id: string) => void;
-  removePromoCode: (id: string) => void;
-  setProducts: (prods: DigitalProduct[]) => void;
-  upsertProduct: (prod: DigitalProduct) => Promise<void>;
+  addStaffMember: (member: StaffMember) => Promise<void>;
+  updateStaffMember: (member: StaffMember) => Promise<void>;
+  removeStaffMember: (id: string) => Promise<void>;
+  addPromoCode: (promo: PromoCodeItem) => Promise<void>;
+  togglePromoCode: (id: string) => Promise<void>;
+  removePromoCode: (id: string) => Promise<void>;
+  setProducts: (prods: DigitalProduct[]) => Promise<void>;
+  upsertProduct: (prod: DigitalProduct) => Promise<{ ok: boolean; message: string }>;
   removeProduct: (id: string) => Promise<void>;
-  setPosts: (posts: StorePost[]) => void;
+  setPosts: (posts: StorePost[]) => Promise<{ ok: boolean; message: string }>;
   setOrders: (orders: OrderRecord[]) => void;
   addOrder: (order: OrderRecord) => Promise<void>;
   updateOrderStatus: (
@@ -773,8 +779,9 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
   currency: "DZD",
   isHydrated: false,
   lastCloudSyncAt: "",
+  cloudSyncStatus: "",
 
-  setConfig: (partial) => {
+  setConfig: async (partial) => {
     const updated: SiteConfig = {
       ...get().config,
       ...partial,
@@ -789,13 +796,15 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_config", JSON.stringify(updated));
     }
-    syncFullStateToCloud({
+    const res = await syncFullStateToSiteConfig({
       config: updated,
       products: get().products,
       posts: get().posts,
       promoCodes: get().promoCodes,
       orders: get().orders,
+      staff: get().staff,
     });
+    set({ cloudSyncStatus: res.message });
   },
 
   authenticateAdmin: (pinCode) => {
@@ -834,46 +843,73 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
 
   logoutAdmin: () => set({ currentAdmin: null }),
 
-  addStaffMember: (member) => {
+  addStaffMember: async (member) => {
     const updated = [member, ...get().staff];
     set({ staff: updated });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_staff", JSON.stringify(updated));
     }
+    const res = await syncFullStateToSiteConfig({
+      config: get().config,
+      products: get().products,
+      posts: get().posts,
+      promoCodes: get().promoCodes,
+      orders: get().orders,
+      staff: updated,
+    });
+    set({ cloudSyncStatus: res.message });
   },
 
-  updateStaffMember: (member) => {
+  updateStaffMember: async (member) => {
     const updated = get().staff.map((s) => (s.id === member.id ? member : s));
     set({ staff: updated });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_staff", JSON.stringify(updated));
     }
+    await syncFullStateToSiteConfig({
+      config: get().config,
+      products: get().products,
+      posts: get().posts,
+      promoCodes: get().promoCodes,
+      orders: get().orders,
+      staff: updated,
+    });
   },
 
-  removeStaffMember: (id) => {
+  removeStaffMember: async (id) => {
     const updated = get().staff.filter((s) => s.id !== id);
     set({ staff: updated });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_staff", JSON.stringify(updated));
     }
+    await syncFullStateToSiteConfig({
+      config: get().config,
+      products: get().products,
+      posts: get().posts,
+      promoCodes: get().promoCodes,
+      orders: get().orders,
+      staff: updated,
+    });
   },
 
-  addPromoCode: (promo) => {
+  addPromoCode: async (promo) => {
     const updated = [promo, ...get().promoCodes];
     set({ promoCodes: updated });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_promos", JSON.stringify(updated));
     }
-    syncFullStateToCloud({
+    const res = await syncFullStateToSiteConfig({
       config: get().config,
       products: get().products,
       posts: get().posts,
       promoCodes: updated,
       orders: get().orders,
+      staff: get().staff,
     });
+    set({ cloudSyncStatus: res.message });
   },
 
-  togglePromoCode: (id) => {
+  togglePromoCode: async (id) => {
     const updated = get().promoCodes.map((p) =>
       p.id === id ? { ...p, active: !p.active } : p
     );
@@ -881,42 +917,46 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_promos", JSON.stringify(updated));
     }
-    syncFullStateToCloud({
+    await syncFullStateToSiteConfig({
       config: get().config,
       products: get().products,
       posts: get().posts,
       promoCodes: updated,
       orders: get().orders,
+      staff: get().staff,
     });
   },
 
-  removePromoCode: (id) => {
+  removePromoCode: async (id) => {
     const updated = get().promoCodes.filter((p) => p.id !== id);
     set({ promoCodes: updated });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_promos", JSON.stringify(updated));
     }
-    syncFullStateToCloud({
+    await syncFullStateToSiteConfig({
       config: get().config,
       products: get().products,
       posts: get().posts,
       promoCodes: updated,
       orders: get().orders,
+      staff: get().staff,
     });
   },
 
-  setProducts: (prods) => {
+  setProducts: async (prods) => {
     set({ products: prods });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_products", JSON.stringify(prods));
     }
-    syncFullStateToCloud({
+    const res = await syncFullStateToSiteConfig({
       config: get().config,
       products: prods,
       posts: get().posts,
       promoCodes: get().promoCodes,
       orders: get().orders,
+      staff: get().staff,
     });
+    set({ cloudSyncStatus: res.message });
   },
 
   upsertProduct: async (prod) => {
@@ -932,14 +972,16 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_products", JSON.stringify(updated));
     }
-    await saveProductToSupabase(prod);
-    await syncFullStateToCloud({
+    const res = await syncFullStateToSiteConfig({
       config: get().config,
       products: updated,
       posts: get().posts,
       promoCodes: get().promoCodes,
       orders: get().orders,
+      staff: get().staff,
     });
+    set({ cloudSyncStatus: res.message });
+    return res;
   },
 
   removeProduct: async (id) => {
@@ -951,58 +993,55 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_products", JSON.stringify(updated));
     }
-    if (isSupabaseConfigured) {
-      try {
-        await supabase.from("products").delete().eq("id", id);
-      } catch {}
-    }
-    await syncFullStateToCloud({
+    const res = await syncFullStateToSiteConfig({
       config: get().config,
       products: updated,
       posts: get().posts,
       promoCodes: get().promoCodes,
       orders: get().orders,
+      staff: get().staff,
     });
+    set({ cloudSyncStatus: res.message });
   },
 
-  setPosts: (posts) => {
+  setPosts: async (posts) => {
     set({ posts, lastCloudSyncAt: new Date().toLocaleTimeString() });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_posts", JSON.stringify(posts));
     }
-    syncFullStateToCloud({
+    const res = await syncFullStateToSiteConfig({
       config: get().config,
       products: get().products,
       posts,
       promoCodes: get().promoCodes,
       orders: get().orders,
+      staff: get().staff,
     });
+    set({ cloudSyncStatus: res.message });
+    return res;
   },
 
   setOrders: (orders) => {
-    const clean = orders.filter((o) => o.orderId !== CLOUD_STATE_ROW_ID);
-    set({ orders: clean });
+    set({ orders });
     if (typeof window !== "undefined") {
-      localStorage.setItem("revelio_orders", JSON.stringify(clean));
+      localStorage.setItem("revelio_orders", JSON.stringify(orders));
     }
   },
 
   addOrder: async (order) => {
-    const updated = [
-      order,
-      ...get().orders.filter((o) => o.orderId !== CLOUD_STATE_ROW_ID),
-    ];
+    const updated = [order, ...get().orders];
     set({ orders: updated });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_orders", JSON.stringify(updated));
     }
     await saveOrderToSupabase(order);
-    await syncFullStateToCloud({
+    await syncFullStateToSiteConfig({
       config: get().config,
       products: get().products,
       posts: get().posts,
       promoCodes: get().promoCodes,
       orders: updated,
+      staff: get().staff,
     });
   },
 
@@ -1021,13 +1060,15 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_orders", JSON.stringify(updated));
     }
-    await syncFullStateToCloud({
+    const res = await syncFullStateToSiteConfig({
       config: get().config,
       products: get().products,
       posts: get().posts,
       promoCodes: get().promoCodes,
       orders: updated,
+      staff: get().staff,
     });
+    set({ cloudSyncStatus: res.message });
   },
 
   setCurrency: (currency) => set({ currency }),
@@ -1068,88 +1109,75 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
   },
 
   hydrateFromCloud: async () => {
-    // 1. قراءة الكاش المحلي كخطوة أولية فقط
     if (typeof window !== "undefined") {
       try {
         const localCart = localStorage.getItem("revelio_cart");
         if (localCart) set({ cart: JSON.parse(localCart) });
-
-        const localStaff = localStorage.getItem("revelio_staff");
-        if (localStaff) set({ staff: JSON.parse(localStaff) });
       } catch {}
     }
 
     let cloudLoaded = false;
 
-    // 2. القراءة المباشرة الحية من جدول orders في Supabase (بدون كاش إطلاقاً)
+    // 1. القراءة المباشرة من جدول site_config (الصف id = 1)
     if (isSupabaseConfigured) {
       try {
-        const { data: syncRow } = await supabase
-          .from("orders")
-          .select("customer_contact")
-          .eq("order_id", CLOUD_STATE_ROW_ID)
+        const { data: cfgRow } = await supabase
+          .from("site_config")
+          .select("hero_subtitle")
+          .eq("id", 1)
           .maybeSingle();
 
         if (
-          syncRow &&
-          typeof (syncRow as Record<string, unknown>).customer_contact === "string"
+          cfgRow &&
+          typeof (cfgRow as Record<string, unknown>).hero_subtitle === "string"
         ) {
-          const parsed = JSON.parse(
-            String((syncRow as Record<string, unknown>).customer_contact)
-          ) as {
-            config?: Partial<SiteConfig>;
-            products?: DigitalProduct[];
-            posts?: StorePost[];
-            promoCodes?: PromoCodeItem[];
-            orders?: OrderRecord[];
-          };
-
-          if (Array.isArray(parsed.products) && parsed.products.length > 0) {
-            set({ products: parsed.products });
-            if (typeof window !== "undefined") {
-              localStorage.setItem(
-                "revelio_products",
-                JSON.stringify(parsed.products)
-              );
-            }
-          }
-          if (Array.isArray(parsed.posts) && parsed.posts.length > 0) {
-            set({ posts: parsed.posts });
-            if (typeof window !== "undefined") {
-              localStorage.setItem("revelio_posts", JSON.stringify(parsed.posts));
-            }
-          }
-          if (Array.isArray(parsed.promoCodes) && parsed.promoCodes.length > 0) {
-            set({ promoCodes: parsed.promoCodes });
-          }
-          if (Array.isArray(parsed.orders) && parsed.orders.length > 0) {
-            set({
-              orders: parsed.orders.filter(
-                (o) => o.orderId !== CLOUD_STATE_ROW_ID
-              ),
-            });
-          }
-          if (parsed.config) {
-            const mergedConfig: SiteConfig = {
-              ...get().config,
-              ...parsed.config,
-              adminPin: CEO_MASTER_CODE,
-              masterPin: CEO_MASTER_CODE,
+          const rawJson = String(
+            (cfgRow as Record<string, unknown>).hero_subtitle
+          );
+          if (rawJson.startsWith("{")) {
+            const parsed = JSON.parse(rawJson) as {
+              config?: Partial<SiteConfig>;
+              products?: DigitalProduct[];
+              posts?: StorePost[];
+              promoCodes?: PromoCodeItem[];
+              orders?: OrderRecord[];
+              staff?: StaffMember[];
             };
-            set({ config: mergedConfig, siteConfig: mergedConfig });
-            if (typeof window !== "undefined") {
-              localStorage.setItem(
-                "revelio_config",
-                JSON.stringify(mergedConfig)
-              );
+
+            if (Array.isArray(parsed.products) && parsed.products.length > 0) {
+              set({ products: parsed.products });
             }
+            if (Array.isArray(parsed.posts) && parsed.posts.length > 0) {
+              set({ posts: parsed.posts });
+            }
+            if (
+              Array.isArray(parsed.promoCodes) &&
+              parsed.promoCodes.length > 0
+            ) {
+              set({ promoCodes: parsed.promoCodes });
+            }
+            if (Array.isArray(parsed.orders) && parsed.orders.length > 0) {
+              set({ orders: parsed.orders });
+            }
+            if (Array.isArray(parsed.staff) && parsed.staff.length > 0) {
+              set({ staff: parsed.staff });
+            }
+            if (parsed.config) {
+              const mergedConfig: SiteConfig = {
+                ...get().config,
+                ...parsed.config,
+                adminPin: CEO_MASTER_CODE,
+                masterPin: CEO_MASTER_CODE,
+              };
+              set({ config: mergedConfig, siteConfig: mergedConfig });
+            }
+            cloudLoaded = true;
           }
-          cloudLoaded = true;
         }
       } catch {}
     }
 
-    // 3. إذا لم يقرأ مباشرة من المتصفح، يقرأ عبر مسار السيرفر مع طابع زمني يمنع الكاش
+    // 2. قراءة احتياطية عبر API السيرفر بدون كاش
     if (!cloudLoaded) {
       try {
         const res = await fetch(
@@ -1164,6 +1192,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
               posts?: StorePost[];
               promoCodes?: PromoCodeItem[];
               orders?: OrderRecord[];
+              staff?: StaffMember[];
             };
           };
           if (data.cloudState) {
@@ -1189,11 +1218,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
               Array.isArray(data.cloudState.orders) &&
               data.cloudState.orders.length > 0
             ) {
-              set({
-                orders: data.cloudState.orders.filter(
-                  (o) => o.orderId !== CLOUD_STATE_ROW_ID
-                ),
-              });
+              set({ orders: data.cloudState.orders });
             }
             if (data.cloudState.config) {
               const mergedConfig: SiteConfig = {
@@ -1210,7 +1235,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
       } catch {}
     }
 
-    // 4. في حال عدم وجود بيانات سحابية بعد، نعرض النسخة المحلية
+    // 3. في حال عدم وجود بيانات في السحابة بعد، نقرأ النسخة المحلية
     if (!cloudLoaded && typeof window !== "undefined") {
       try {
         const localProds = localStorage.getItem("revelio_products");

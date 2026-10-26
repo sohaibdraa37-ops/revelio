@@ -33,6 +33,10 @@ import {
   Plus,
   Send,
   Sparkles,
+  RotateCw,
+  Maximize2,
+  RefreshCw,
+  CloudCheck,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -89,6 +93,7 @@ export default function AdminDashboard() {
     staff,
     promoCodes,
     currentAdmin,
+    cloudSyncStatus,
     setConfig,
     authenticateAdmin,
     logoutAdmin,
@@ -103,17 +108,16 @@ export default function AdminDashboard() {
     updateOrderStatus,
   } = useRevelioStore();
 
-  // حالة تسجيل الدخول السري (CEO أو موظف)
   const [pinInput, setPinInput] = useState<string>("");
   const [loginError, setLoginError] = useState<string>("");
   const [activeTab, setActiveTab] = useState<AdminTab>("orders");
 
-  // فلترة وبحث داخل قسم الطلبات الموسع
+  // فلترة الطلبات
   const [orderFilter, setOrderFilter] = useState<"ALL" | "PENDING" | "COMPLETED">("ALL");
   const [orderSearch, setOrderSearch] = useState<string>("");
   const [deliveryMessages, setDeliveryMessages] = useState<Record<string, string>>({});
 
-  // حقول إضافة أو تعديل منتج + القوالب + طريقة التسليم
+  // حقول المنتج
   const [editingProduct, setEditingProduct] = useState<DigitalProduct | null>(null);
   const [prodTitle, setProdTitle] = useState<string>("");
   const [prodCategory, setProdCategory] = useState<string>("AI");
@@ -134,34 +138,42 @@ export default function AdminDashboard() {
     "تفعيل رسمي 100%\nضمان ذهبي طوال المدة\nدعم فني عبر واتساب وتيليجرام"
   );
   const [prodImageUrl, setProdImageUrl] = useState<string>("");
+  const [prodImageFitMode, setProdImageFitMode] = useState<"cover" | "contain">("cover");
 
-  // حالات أداة القص الاحترافي للصور (Studio Image Cropper)
+  // =========================================================================
+  // استوديو تحرير وقص الصور الحر والكبير (سحب مباشر بالماوس + تكبير عجلة الماوس + تدوير + طابع زجاجي)
+  // =========================================================================
   const [rawImageSrc, setRawImageSrc] = useState<string | null>(null);
-  const [cropZoom, setCropZoom] = useState<number>(1.1);
+  const [studioFitMode, setStudioFitMode] = useState<"cover" | "contain" | "free">("contain");
+  const [cropZoom, setCropZoom] = useState<number>(1);
   const [cropOffsetX, setCropOffsetX] = useState<number>(0);
   const [cropOffsetY, setCropOffsetY] = useState<number>(0);
+  const [cropRotation, setCropRotation] = useState<number>(0);
+  const [glassBgGlow, setGlassBgGlow] = useState<string>("#00eeff");
+  const [isDraggingImg, setIsDraggingImg] = useState<boolean>(false);
+  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const cropCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const loadedImageRef = useRef<HTMLImageElement | null>(null);
 
-  // حقول خزنة الأكواد السرية
+  // خزنة الأكواد
   const [selectedVaultProduct, setSelectedVaultProduct] = useState<string>(
     products[0]?.id || "prod-gemini-adv"
   );
   const [rawKeysInput, setRawKeysInput] = useState<string>("");
   const [vaultStatusMsg, setVaultStatusMsg] = useState<string>("");
 
-  // حقول المنشورات والنشرات الإخبارية
+  // المنشورات
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [postTitle, setPostTitle] = useState<string>("");
   const [postBadge, setPostBadge] = useState<string>("عرض جديد 🔥");
   const [postContent, setPostContent] = useState<string>("");
   const [broadcastStatus, setBroadcastStatus] = useState<string>("");
 
-  // حقول أكواد البرومو
+  // البرومو
   const [newPromoCode, setNewPromoCode] = useState<string>("");
   const [newPromoPercent, setNewPromoPercent] = useState<number>(10);
 
-  // حقول إدارة الموظفين (خاص بالـ CEO)
+  // الموظفين
   const [staffName, setStaffName] = useState<string>("");
   const [staffRoleTitle, setStaffRoleTitle] = useState<string>("مسؤول مبيعات وتفعيل");
   const [staffPinCode, setStaffPinCode] = useState<string>("");
@@ -171,16 +183,14 @@ export default function AdminDashboard() {
     "products",
   ]);
 
-  // حالة ربط Webhook تيليجرام
+  // حالة ربط وفحص البوت
   const [webhookStatus, setWebhookStatus] = useState<string>("");
 
-  // الإحصائيات المالية
   const telemetry = useMemo(
     () => buildPortfolioTelemetry(products, orders, config.dzdRate),
     [products, orders, config.dzdRate]
   );
 
-  // بناء سجل الزبائن الذكي (Customer CRM) من الطلبات
   const customerDirectory = useMemo(() => {
     const map = new Map<
       string,
@@ -224,7 +234,7 @@ export default function AdminDashboard() {
     return Array.from(map.values());
   }, [orders]);
 
-  // رسم المعاينة الحية لأداة قص الصورة كلما تغيرت الإزاحة أو التكبير
+  // رسم الصورة الحرة داخل الاستوديو الكبير مع الطابع الزجاجي والهالة الخلفية
   useEffect(() => {
     if (!rawImageSrc || !cropCanvasRef.current || !loadedImageRef.current) return;
     const canvas = cropCanvasRef.current;
@@ -236,22 +246,59 @@ export default function AdminDashboard() {
     const ch = canvas.height;
 
     ctx.clearRect(0, 0, cw, ch);
-    ctx.fillStyle = "#020617";
+
+    // 1. خلفية زجاجية داكنة مع هالة ضوئية ملونة (Glass Ambient Backdrop)
+    const bgGrad = ctx.createLinearGradient(0, 0, cw, ch);
+    bgGrad.addColorStop(0, "#020617");
+    bgGrad.addColorStop(0.5, "#07142b");
+    bgGrad.addColorStop(1, "#020617");
+    ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, cw, ch);
 
-    const scale = Math.max(cw / img.width, ch / img.height) * cropZoom;
-    const drawW = img.width * scale;
-    const drawH = img.height * scale;
-    const drawX = (cw - drawW) / 2 + cropOffsetX;
-    const drawY = (ch - drawH) / 2 + cropOffsetY;
+    const radialGlow = ctx.createRadialGradient(
+      cw / 2,
+      ch / 2,
+      20,
+      cw / 2,
+      ch / 2,
+      cw * 0.55
+    );
+    radialGlow.addColorStop(0, `${glassBgGlow}38`);
+    radialGlow.addColorStop(0.6, `${glassBgGlow}12`);
+    radialGlow.addColorStop(1, "transparent");
+    ctx.fillStyle = radialGlow;
+    ctx.fillRect(0, 0, cw, ch);
 
-    ctx.drawImage(img, drawX, drawY, drawW, drawH);
+    // 2. حساب أبعاد الصورة حسب الوضع (Contain = كامل بدون قص | Cover = تغطية | Free = حر)
+    const baseScale =
+      studioFitMode === "contain"
+        ? Math.min((cw * 0.88) / img.width, (ch * 0.88) / img.height)
+        : Math.max(cw / img.width, ch / img.height);
 
-    // إطار رقمي خفيف للمعاينة
-    ctx.strokeStyle = "rgba(0, 238, 255, 0.45)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(1, 1, cw - 2, ch - 2);
-  }, [rawImageSrc, cropZoom, cropOffsetX, cropOffsetY]);
+    const finalScale = baseScale * cropZoom;
+    const drawW = img.width * finalScale;
+    const drawH = img.height * finalScale;
+
+    ctx.save();
+    ctx.translate(cw / 2 + cropOffsetX, ch / 2 + cropOffsetY);
+    ctx.rotate((cropRotation * Math.PI) / 180);
+
+    // ظل عميق خلف الصورة لإبراز الطابع الزجاجي ثلاثي الأبعاد
+    ctx.shadowColor = "rgba(0, 0, 0, 0.75)";
+    ctx.shadowBlur = 28;
+    ctx.shadowOffsetY = 10;
+
+    ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.restore();
+
+    // 3. لمعة زجاجية قطرية خفيفة فوق الإطار (Glass Specular Overlay)
+    const sheenGrad = ctx.createLinearGradient(0, 0, cw, ch);
+    sheenGrad.addColorStop(0, "rgba(255, 255, 255, 0.08)");
+    sheenGrad.addColorStop(0.35, "rgba(255, 255, 255, 0.01)");
+    sheenGrad.addColorStop(0.5, "transparent");
+    ctx.fillStyle = sheenGrad;
+    ctx.fillRect(0, 0, cw, ch);
+  }, [rawImageSrc, studioFitMode, cropZoom, cropOffsetX, cropOffsetY, cropRotation, glassBgGlow]);
 
   const handleSelectImageForCrop = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -263,23 +310,52 @@ export default function AdminDashboard() {
       imgObj.onload = () => {
         loadedImageRef.current = imgObj;
         setRawImageSrc(resultStr);
-        setCropZoom(1.1);
+        setStudioFitMode("contain");
+        setCropZoom(1);
         setCropOffsetX(0);
         setCropOffsetY(0);
+        setCropRotation(0);
       };
       imgObj.src = resultStr;
     };
     reader.readAsDataURL(file);
   };
 
+  // السحب الحر بالماوس واللمس مباشرة فوق لوحة الصورة
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    setIsDraggingImg(true);
+    dragStartRef.current = {
+      x: e.clientX - cropOffsetX,
+      y: e.clientY - cropOffsetY,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDraggingImg) return;
+    setCropOffsetX(e.clientX - dragStartRef.current.x);
+    setCropOffsetY(e.clientY - dragStartRef.current.y);
+  };
+
+  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    setIsDraggingImg(false);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  const handleCanvasWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.08 : -0.08;
+    setCropZoom((prev) => Math.min(3.5, Math.max(0.2, Number((prev + delta).toFixed(2)))));
+  };
+
   const handleApplyCrop = () => {
     if (!cropCanvasRef.current) return;
-    const croppedDataUrl = cropCanvasRef.current.toDataURL("image/webp", 0.88);
+    const croppedDataUrl = cropCanvasRef.current.toDataURL("image/webp", 0.85);
     setProdImageUrl(croppedDataUrl);
+    setProdImageFitMode(studioFitMode === "contain" ? "contain" : "cover");
     setRawImageSrc(null);
   };
 
-  // تسجيل الدخول السري (يميز بين كود الـ CEO وأكواد الموظفين)
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     const user = authenticateAdmin(pinInput);
@@ -294,7 +370,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // حفظ أو تعديل منتج
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!prodTitle.trim()) return;
@@ -331,16 +406,17 @@ export default function AdminDashboard() {
           : ["تفعيل رسمي 100%", "ضمان ذهبي شامل", "دعم فني متواصل"],
       sampleKeys: [],
       imageUrl: prodImageUrl,
-      accentColor: editingProduct?.accentColor || "#00eeff",
+      imageFitMode: prodImageFitMode,
+      accentColor: glassBgGlow || "#00eeff",
     };
 
-    await upsertProduct(newProd);
+    const res = await upsertProduct(newProd);
     setEditingProduct(null);
     setProdTitle("");
     setProdShortDesc("");
     setProdDetails("");
     setProdImageUrl("");
-    alert("✅ تم حفظ المنتج وقالب العرض ومزامنته مع قاعدة البيانات بنجاح!");
+    alert(res.message);
   };
 
   const startEditProduct = (p: DigitalProduct) => {
@@ -360,9 +436,10 @@ export default function AdminDashboard() {
     setProdDetails(p.details || p.description);
     setProdFeaturesText((p.features || []).join("\n"));
     setProdImageUrl(p.imageUrl || "");
+    setProdImageFitMode(p.imageFitMode || "cover");
+    setGlassBgGlow(p.accentColor || "#00eeff");
   };
 
-  // رفع الأكواد السرية إلى الخزنة
   const handleUploadVaultKeys = async (e: React.FormEvent) => {
     e.preventDefault();
     const lines = rawKeysInput
@@ -391,18 +468,17 @@ export default function AdminDashboard() {
     setRawKeysInput("");
   };
 
-  // حفظ المنشور أو إرساله كنشرة إلى تيليجرام
   const handleSavePost = async (e: React.FormEvent, sendToTelegram = false) => {
     e.preventDefault();
     if (!postTitle.trim() || !postContent.trim()) return;
 
+    let updatedPosts: StorePost[] = [];
     if (editingPostId) {
-      const updated = posts.map((p) =>
+      updatedPosts = posts.map((p) =>
         p.id === editingPostId
           ? { ...p, title: postTitle, badge: postBadge, content: postContent }
           : p
       );
-      setPosts(updated);
       setEditingPostId(null);
     } else {
       const newPost: StorePost = {
@@ -413,11 +489,13 @@ export default function AdminDashboard() {
         date: new Date().toISOString().split("T")[0],
         active: true,
       };
-      setPosts([newPost, ...posts]);
+      updatedPosts = [newPost, ...posts];
     }
 
+    const syncRes = await setPosts(updatedPosts);
+    setBroadcastStatus(syncRes.message);
+
     if (sendToTelegram) {
-      setBroadcastStatus("جاري إرسال النشرة الإخبارية عبر تيليجرام...");
       try {
         const res = await fetch("/api/telegram", {
           method: "POST",
@@ -427,44 +505,42 @@ export default function AdminDashboard() {
             title: postTitle,
             badge: postBadge,
             content: postContent,
+            botToken: config.telegramBotToken,
+            adminChatId: config.telegramAdminChatId,
           }),
         });
         if (res.ok) {
-          setBroadcastStatus("✅ تم نشر الإعلان في الموقع وإرساله إلى تيليجرام بنجاح!");
-        } else {
-          setBroadcastStatus("✅ تم النشر في الموقع (تأكد من إعداد توكن البوت للإرسال).");
+          setBroadcastStatus(
+            `${syncRes.message} | ✈️ وتم إرسال النشرة إلى تيليجرام بنجاح!`
+          );
         }
-      } catch {
-        setBroadcastStatus("✅ تم النشر في واجهة المتجر بنجاح!");
-      }
+      } catch {}
     }
 
     setPostTitle("");
     setPostContent("");
   };
 
-  // إضافة كود برومو جديد
-  const handleCreatePromo = (e: React.FormEvent) => {
+  const handleCreatePromo = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanCode = newPromoCode.trim().toUpperCase();
     if (!cleanCode) return;
 
-    addPromoCode({
+    await addPromoCode({
       id: `promo-${Date.now()}`,
       code: cleanCode,
       discountPercent: Number(newPromoPercent),
       active: true,
       usageCount: 0,
     });
-    setConfig({
+    await setConfig({
       promoCode: cleanCode,
       promoDiscountPercent: Number(newPromoPercent),
     });
     setNewPromoCode("");
   };
 
-  // إضافة موظف جديد (CEO فقط)
-  const handleCreateStaff = (e: React.FormEvent) => {
+  const handleCreateStaff = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!staffName.trim() || !staffPinCode.trim()) return;
 
@@ -478,10 +554,10 @@ export default function AdminDashboard() {
       createdAt: new Date().toISOString().split("T")[0],
     };
 
-    addStaffMember(newMember);
+    await addStaffMember(newMember);
     setStaffName("");
     setStaffPinCode("");
-    alert(`✅ تم إضافة الموظف (${newMember.name}) وتفعيل كود دخوله الخاص بنجاح!`);
+    alert(`✅ تم إضافة الموظف (${newMember.name}) وحفظه في السحابة بنجاح!`);
   };
 
   const toggleStaffPermission = (perm: AdminPermission) => {
@@ -490,7 +566,6 @@ export default function AdminDashboard() {
     );
   };
 
-  // تعديل وسيلة دفع محددة
   const handleUpdatePaymentMethod = (
     id: string,
     field: keyof PaymentMethodConfig,
@@ -516,7 +591,7 @@ export default function AdminDashboard() {
     });
   };
 
-  // تفعيل Webhook البوت مع تمرير التوكن المكتوب في الإعدادات مباشرة
+  // تفعيل Webhook البوت + اختبار إرسال رسالة حية
   const activateTelegramWebhook = async () => {
     setWebhookStatus("جاري ربط البوت وتفعيل الوكيل الذكي...");
     try {
@@ -530,7 +605,7 @@ export default function AdminDashboard() {
       };
       if (data.telegramResponse?.ok) {
         setWebhookStatus(
-          "✅ تم ربط بوت @REVELIO_ASSISTANT_BOT وتفعيله بنجاح! أرسل له رسالة الآن في تيليجرام."
+          "✅ تم ربط البوت بنجاح! أرسل له الآن أي رسالة في تيليجرام وسيرد عليك فوراً."
         );
       } else {
         setWebhookStatus(
@@ -545,7 +620,36 @@ export default function AdminDashboard() {
       setWebhookStatus("⚠️ تعذر الاتصال، تأكد من تشغيل السيرفر.");
     }
   };
-  // شاشة تسجيل الدخول السرية (لا تظهر أي تلميح للكود نهائياً)
+
+  const sendTelegramTestMessage = async () => {
+    setWebhookStatus("جاري إرسال رسالة اختبارية إلى تيليجرام...");
+    try {
+      const res = await fetch("/api/telegram", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send-test",
+          botToken: config.telegramBotToken,
+          adminChatId: config.telegramAdminChatId,
+        }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (data.ok) {
+        setWebhookStatus(
+          "✅ وصلت رسالة الاختبار إلى حسابك في تيليجرام الآن! البوت يعمل 100%."
+        );
+      } else {
+        setWebhookStatus(
+          `❌ فشل الإرسال: ${
+            data.error || "تأكد من صحة توكن البوت وأنك ضغطت Start داخل البوت"
+          }`
+        );
+      }
+    } catch {
+      setWebhookStatus("⚠️ خطأ في الاتصال بالخادم.");
+    }
+  };
+
   if (!currentAdmin) {
     return (
       <div dir="rtl" className="min-h-screen flex items-center justify-center p-4">
@@ -612,7 +716,7 @@ export default function AdminDashboard() {
   }> = [
     { id: "orders", label: "الطلبات والتسليم", icon: ShoppingBag, perm: "orders" },
     { id: "customers", label: "سجل الزبائن CRM", icon: Users, perm: "customers" },
-    { id: "products", label: "المنتجات وقص الصور", icon: Package, perm: "products" },
+    { id: "products", label: "المنتجات واستوديو الصور", icon: Package, perm: "products" },
     { id: "promos", label: "أكواد البرومو", icon: TicketPercent, perm: "promos" },
     { id: "posts", label: "المنشورات والنشرات", icon: Megaphone, perm: "posts" },
     { id: "vault", label: "خزنة الأكواد", icon: KeyRound, perm: "vault" },
@@ -644,54 +748,76 @@ export default function AdminDashboard() {
       dir="rtl"
       className="min-h-screen text-slate-100 p-3 sm:p-6 max-w-7xl mx-auto space-y-6 relative z-10"
     >
-      {/* الهيدر مع شارة الـ CEO أو اسم الموظف ومنصبه */}
-      <div className="cyber-card p-4 sm:p-6 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-cyan-500/15 border border-cyan-400/40 flex items-center justify-center text-cyan-300">
-            <Shield className="w-7 h-7" />
-          </div>
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-lg sm:text-2xl font-black text-white">
-                مركز القيادة والإدارة — REVELIO
-              </h1>
-              <span
-                className={`px-3 py-0.5 rounded-full text-xs font-bold border ${
-                  currentAdmin.role === "CEO"
-                    ? "bg-amber-500/20 text-amber-300 border-amber-400/50"
-                    : "bg-cyan-500/20 text-cyan-300 border-cyan-400/40"
-                }`}
-              >
-                {currentAdmin.role === "CEO" ? "👑 CEO MASTER" : "🛡️ STAFF"}:{" "}
-                {currentAdmin.name} ({currentAdmin.roleTitle})
-              </span>
+      {/* الهيدر مع مؤشر حالة المزامنة السحابية الحقيقية */}
+      <div className="cyber-card p-4 sm:p-6 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-cyan-500/15 border border-cyan-400/40 flex items-center justify-center text-cyan-300">
+              <Shield className="w-7 h-7" />
             </div>
-            <p className="text-xs text-slate-300 mt-1">
-              تحكم فوري بالطلبات، قص صور المنتجات، وسائل الدفع، والموظفين
-            </p>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-lg sm:text-2xl font-black text-white">
+                  مركز القيادة والإدارة — REVELIO
+                </h1>
+                <span
+                  className={`px-3 py-0.5 rounded-full text-xs font-bold border ${
+                    currentAdmin.role === "CEO"
+                      ? "bg-amber-500/20 text-amber-300 border-amber-400/50"
+                      : "bg-cyan-500/20 text-cyan-300 border-cyan-400/40"
+                  }`}
+                >
+                  {currentAdmin.role === "CEO" ? "👑 CEO MASTER" : "🛡️ STAFF"}:{" "}
+                  {currentAdmin.name} ({currentAdmin.roleTitle})
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-1">
+                جميع التعديلات تُحفظ في جدول <code>site_config</code> السحابي لتظهر على
+                الهواتف فوراً
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Link
+              href="/"
+              className="px-4 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-cyan-300 text-xs font-bold flex items-center gap-1.5 hover:bg-slate-800"
+            >
+              <span>معاينة المتجر</span>
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+            <button
+              type="button"
+              onClick={logoutAdmin}
+              className="px-3.5 py-2.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-1.5 hover:bg-rose-900 cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>خروج</span>
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Link
-            href="/"
-            className="px-4 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-cyan-300 text-xs font-bold flex items-center gap-1.5 hover:bg-slate-800"
-          >
-            <span>معاينة المتجر</span>
-            <ArrowRight className="w-4 h-4" />
-          </Link>
-          <button
-            type="button"
-            onClick={logoutAdmin}
-            className="px-3.5 py-2.5 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-1.5 hover:bg-rose-900 cursor-pointer"
-          >
-            <LogOut className="w-4 h-4" />
-            <span>خروج</span>
-          </button>
+        {/* شريط حالة اتصال قاعدة بيانات Supabase */}
+        <div
+          className={`p-3 rounded-xl border text-xs font-bold flex flex-wrap items-center justify-between gap-2 ${
+            isSupabaseConfigured
+              ? "bg-emerald-500/10 border-emerald-400/30 text-emerald-300"
+              : "bg-amber-500/15 border-amber-400/40 text-amber-200"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <CloudCheck className="w-4 h-4 shrink-0" />
+            <span>
+              {cloudSyncStatus ||
+                (isSupabaseConfigured
+                  ? "☁️ متصل بقاعدة بيانات Supabase (جدول site_config جاهز للمزامنة الفورية مع الهواتف)"
+                  : "⚠️ مفتاح NEXT_PUBLIC_SUPABASE_ANON_KEY غير موضوع في src/lib/supabase.ts بعد — الصقه في السطر 8 ليظهر كل شيء على الهاتف!")}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* شريط التبويبات حسب صلاحيات الشخص المسجل */}
+      {/* شريط التبويبات */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2">
         {allowedTabs.map((tab) => {
           const Icon = tab.icon;
@@ -714,7 +840,7 @@ export default function AdminDashboard() {
       </div>
 
       {/* ====================================================================
-          1. تبويب الطلبات الموسع والواضح (Orders Control Center)
+          1. تبويب الطلبات الموسع
          ==================================================================== */}
       {activeTab === "orders" && (
         <div className="space-y-5">
@@ -724,8 +850,8 @@ export default function AdminDashboard() {
                 مركز إدارة الطلبات والتسليم المباشر ({filteredOrders.length})
               </h2>
               <p className="text-xs text-slate-300 mt-1">
-                تأكد من وصول المبلغ في حسابك (BaridiMob / CCP / USDT)، ثم اضغط على زر
-                مراسلة الزبون لإرسال التفعيل مباشرة مع رسالة الطلب الجاهزة.
+                تأكد من وصول المبلغ في حسابك، ثم اضغط على زر مراسلة الزبون لإرسال
+                التفعيل مباشرة مع رسالة الطلب الجاهزة.
               </p>
             </div>
 
@@ -753,7 +879,7 @@ export default function AdminDashboard() {
                 type="text"
                 value={orderSearch}
                 onChange={(e) => setOrderSearch(e.target.value)}
-                placeholder="ابحث برقم الطلب أو اسم الزبون أو الإيميل..."
+                placeholder="ابحث برقم الطلب أو اسم الزبون..."
                 className="px-3.5 py-2 rounded-xl bg-slate-950 border border-cyan-500/30 text-xs text-white min-w-[220px]"
               />
             </div>
@@ -863,7 +989,6 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* خانة كتابة الكود أو بيانات التفعيل + أزرار الإرسال الكبيرة */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center pt-1">
                     <input
                       type="text"
@@ -874,7 +999,7 @@ export default function AdminDashboard() {
                           [ordKey]: e.target.value,
                         })
                       }
-                      placeholder="اكتب هنا الكود، أو بيانات الحساب (الإيميل/الباسورد)، أو ملاحظة التفعيل ليتم حفظها وإرسالها للزبون..."
+                      placeholder="اكتب هنا الكود، أو بيانات الحساب، أو ملاحظة التفعيل..."
                       className="lg:col-span-6 px-4 py-3 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs sm:text-sm text-white font-mono"
                     />
 
@@ -917,7 +1042,7 @@ export default function AdminDashboard() {
       )}
 
       {/* ====================================================================
-          2. تبويب سجل وتتبع الزبائن (Customer CRM)
+          2. تبويب سجل الزبائن (CRM)
          ==================================================================== */}
       {activeTab === "customers" && (
         <div className="cyber-card p-5 sm:p-6 space-y-4">
@@ -973,8 +1098,9 @@ export default function AdminDashboard() {
                       </div>
                     )}
                     <div className="text-slate-400 text-xs">
-                      آخر اشتراك: <strong className="text-slate-200">{cust.lastProduct}</strong>{" "}
-                      ({cust.lastOrderDate})
+                      آخر اشتراك:{" "}
+                      <strong className="text-slate-200">{cust.lastProduct}</strong> (
+                      {cust.lastOrderDate})
                     </div>
                   </div>
 
@@ -997,20 +1123,20 @@ export default function AdminDashboard() {
       )}
 
       {/* ====================================================================
-          3. تبويب المنتجات + أداة القص الاحترافي للصور + طريقة التسليم
+          3. تبويب المنتجات + استوديو تحرير وتأطير الصور الزجاجي الحر والكبير
          ==================================================================== */}
       {activeTab === "products" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <form
             onSubmit={handleSaveProduct}
-            className="cyber-card lg:col-span-6 p-5 space-y-4 h-fit"
+            className="cyber-card lg:col-span-7 p-5 sm:p-6 space-y-4 h-fit"
           >
             <h3 className="font-black text-lg text-cyan-300 flex items-center gap-2">
               <Sparkles className="w-5 h-5" />
               <span>
                 {editingProduct
                   ? `تعديل المنتج: ${editingProduct.title}`
-                  : "إضافة منتج جديد + قص الصورة الاحترافي"}
+                  : "إضافة منتج جديد + استوديو الصور الزجاجي الحر"}
               </span>
             </h3>
 
@@ -1042,7 +1168,6 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* اختيار طريقة التفعيل (كود / دعوة إيميل / حساب) + القالب البصري */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
               <div>
                 <label className="text-xs text-cyan-300 font-bold block mb-1">
@@ -1081,7 +1206,7 @@ export default function AdminDashboard() {
 
               <div>
                 <label className="text-xs text-slate-300 block mb-1">
-                  قالب البطاقة (Template):
+                  قالب البطاقة الزجاجي (Template):
                 </label>
                 <select
                   value={prodTemplateStyle}
@@ -1099,72 +1224,168 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* أداة قص الصور التفاعلية (Studio Image Cropper) */}
-            <div className="p-4 rounded-xl bg-slate-950/90 border border-cyan-500/30 space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+            {/* =================================================================
+                استوديو الصور الزجاجي الحر والكبير (اسحب بالماوس + كبر بالعجلة + احتواء كامل أو ملء)
+               ================================================================= */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/95 border border-cyan-400/40 space-y-4 shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-xs sm:text-sm font-black text-cyan-300 flex items-center gap-2">
                   <Crop className="w-4 h-4" />
-                  <span>صورة المنتج مع أداة القص والتأطير الاحترافية (600×360):</span>
+                  <span>
+                    استوديو تحرير وتأطير صورة المنتج بحرية كاملة (Glass Image Studio):
+                  </span>
                 </label>
                 <input
                   type="file"
                   accept="image/*"
                   onChange={handleSelectImageForCrop}
-                  className="text-xs text-slate-300 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-cyan-500/20 file:text-cyan-300 file:font-bold cursor-pointer"
+                  className="text-xs text-slate-300 file:py-1.5 file:px-3.5 file:rounded-xl file:border-0 file:bg-cyan-400 file:text-slate-950 file:font-black cursor-pointer"
                 />
               </div>
 
               {rawImageSrc && (
-                <div className="space-y-3 pt-2">
-                  <div className="rounded-xl overflow-hidden border border-cyan-400/50 bg-slate-950 flex justify-center">
+                <div className="space-y-4 pt-1">
+                  {/* أزرار أنماط التأطير الحرة */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-900/90 p-2.5 rounded-xl border border-cyan-500/20">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStudioFitMode("contain");
+                          setCropZoom(1);
+                          setCropOffsetX(0);
+                          setCropOffsetY(0);
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition ${
+                          studioFitMode === "contain"
+                            ? "bg-cyan-400 text-slate-950"
+                            : "bg-slate-800 text-slate-300"
+                        }`}
+                      >
+                        🖼️ إظهار الصورة كاملة بدون قص (Contain)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStudioFitMode("cover");
+                          setCropZoom(1);
+                          setCropOffsetX(0);
+                          setCropOffsetY(0);
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition ${
+                          studioFitMode === "cover"
+                            ? "bg-cyan-400 text-slate-950"
+                            : "bg-slate-800 text-slate-300"
+                        }`}
+                      >
+                        📐 ملء الكبسولة الزجاجية (Cover)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setCropRotation((r) => (r + 90) % 360)}
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-800 text-cyan-300 text-xs font-bold flex items-center gap-1 cursor-pointer hover:bg-slate-700"
+                      >
+                        <RotateCw className="w-3.5 h-3.5" />
+                        <span>تدوير 90°</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCropZoom(1);
+                          setCropOffsetX(0);
+                          setCropOffsetY(0);
+                          setCropRotation(0);
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs font-bold flex items-center gap-1 cursor-pointer hover:bg-slate-700"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>توسيط</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-slate-400">لون الهالة الزجاجية:</span>
+                      {[
+                        "#00eeff",
+                        "#10b981",
+                        "#f43f5e",
+                        "#8b5cf6",
+                        "#f59e0b",
+                      ].map((hex) => (
+                        <button
+                          key={hex}
+                          type="button"
+                          onClick={() => setGlassBgGlow(hex)}
+                          className={`w-5 h-5 rounded-full border-2 cursor-pointer ${
+                            glassBgGlow === hex ? "border-white scale-110" : "border-transparent"
+                          }`}
+                          style={{ backgroundColor: hex }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* مساحة الرسم الكبيرة التفاعلية (اسحب بالماوس مباشرة + كبر بالعجلة) */}
+                  <div className="relative rounded-2xl overflow-hidden border-2 border-cyan-400/60 bg-slate-950 shadow-2xl">
+                    <div className="absolute top-2.5 right-3 z-10 pointer-events-none px-2.5 py-1 rounded-full bg-slate-950/80 border border-cyan-500/40 text-[11px] text-cyan-300 flex items-center gap-1.5">
+                      <Move className="w-3.5 h-3.5" />
+                      <span>اسحب الصورة بالماوس بحرية أو حرك عجلة الماوس للتكبير/التصغير</span>
+                    </div>
                     <canvas
                       ref={cropCanvasRef}
-                      width={600}
-                      height={360}
-                      className="w-full max-w-[420px] h-auto"
+                      width={800}
+                      height={500}
+                      onPointerDown={handleCanvasPointerDown}
+                      onPointerMove={handleCanvasPointerMove}
+                      onPointerUp={handleCanvasPointerUp}
+                      onWheel={handleCanvasWheel}
+                      className="w-full h-[300px] sm:h-[360px] object-contain cursor-grab active:cursor-grabbing touch-none"
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  {/* أشرطة تحكم إضافية دقيقة */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-slate-900/70 p-3 rounded-xl">
                     <div>
-                      <span className="text-slate-400 flex items-center gap-1 mb-1">
-                        <ZoomIn className="w-3.5 h-3.5" /> تكبير (Zoom):
+                      <span className="text-slate-300 flex items-center justify-between mb-1">
+                        <span className="flex items-center gap-1">
+                          <ZoomIn className="w-3.5 h-3.5 text-cyan-400" /> حجم الصورة
+                          (Zoom):
+                        </span>
+                        <strong className="text-cyan-300 font-mono">
+                          {Math.round(cropZoom * 100)}%
+                        </strong>
                       </span>
                       <input
                         type="range"
-                        min="0.6"
-                        max="3"
-                        step="0.05"
+                        min="0.2"
+                        max="3.5"
+                        step="0.02"
                         value={cropZoom}
                         onChange={(e) => setCropZoom(Number(e.target.value))}
                         className="w-full accent-cyan-400"
                       />
                     </div>
+
                     <div>
-                      <span className="text-slate-400 flex items-center gap-1 mb-1">
-                        <Move className="w-3.5 h-3.5" /> تحريك أفقي (X):
-                      </span>
-                      <input
-                        type="range"
-                        min="-220"
-                        max="220"
-                        step="2"
-                        value={cropOffsetX}
-                        onChange={(e) => setCropOffsetX(Number(e.target.value))}
-                        className="w-full accent-cyan-400"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-slate-400 flex items-center gap-1 mb-1">
-                        <Move className="w-3.5 h-3.5" /> تحريك عمودي (Y):
+                      <span className="text-slate-300 flex items-center justify-between mb-1">
+                        <span className="flex items-center gap-1">
+                          <Maximize2 className="w-3.5 h-3.5 text-cyan-400" /> زاوية
+                          الميلان (Rotation):
+                        </span>
+                        <strong className="text-cyan-300 font-mono">
+                          {cropRotation}°
+                        </strong>
                       </span>
                       <input
                         type="range"
                         min="-180"
                         max="180"
-                        step="2"
-                        value={cropOffsetY}
-                        onChange={(e) => setCropOffsetY(Number(e.target.value))}
+                        step="1"
+                        value={cropRotation}
+                        onChange={(e) => setCropRotation(Number(e.target.value))}
                         className="w-full accent-cyan-400"
                       />
                     </div>
@@ -1173,30 +1394,30 @@ export default function AdminDashboard() {
                   <button
                     type="button"
                     onClick={handleApplyCrop}
-                    className="w-full py-2.5 rounded-xl bg-emerald-400 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/20"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>قص واعتماد الصورة للمنتج</span>
+                    <span>اعتماد هذا التصميم الزجاجي للصورة</span>
                   </button>
                 </div>
               )}
 
               {prodImageUrl && !rawImageSrc && (
-                <div className="flex items-center justify-between gap-3 bg-slate-900 p-2.5 rounded-xl border border-emerald-500/30">
+                <div className="flex items-center justify-between gap-3 bg-slate-900/90 p-3 rounded-xl border border-emerald-500/40">
                   <img
                     src={prodImageUrl}
                     alt="Preview"
-                    className="w-24 h-14 object-cover rounded-lg border border-cyan-500/30"
+                    className="w-28 h-16 object-cover rounded-xl border border-cyan-400/40 shadow-md"
                   />
                   <span className="text-xs text-emerald-300 font-bold">
-                    ✓ الصورة المقصوصة جاهزة للعرض في البطاقة
+                    ✓ الصورة الزجاجية جاهزة ومعتمدة للبطاقة
                   </span>
                   <button
                     type="button"
                     onClick={() => setProdImageUrl("")}
                     className="text-xs text-rose-400 hover:underline cursor-pointer"
                   >
-                    حذف الصورة
+                    حذف / تغيير
                   </button>
                 </div>
               )}
@@ -1281,13 +1502,15 @@ export default function AdminDashboard() {
 
             <button
               type="submit"
-              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 font-black text-xs sm:text-sm cursor-pointer"
+              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 font-black text-xs sm:text-sm cursor-pointer shadow-lg shadow-cyan-500/20"
             >
-              {editingProduct ? "حفظ تعديلات المنتج" : "نشر المنتج في المتجر"}
+              {editingProduct
+                ? "حفظ التعديلات ومزامنتها في site_config"
+                : "نشر المنتج في المتجر ومزامنته للهواتف"}
             </button>
           </form>
 
-          <div className="cyber-card lg:col-span-6 p-5 space-y-3">
+          <div className="cyber-card lg:col-span-5 p-5 space-y-3">
             <h3 className="font-black text-lg text-white">
               كتالوج المنتجات الحالي ({products.length})
             </h3>
@@ -1304,7 +1527,7 @@ export default function AdminDashboard() {
                         <img
                           src={p.imageUrl}
                           alt={p.title}
-                          className="w-16 h-12 rounded-lg object-cover border border-cyan-500/30 shrink-0"
+                          className="w-16 h-12 rounded-lg object-cover border border-cyan-500/40 shrink-0"
                         />
                       ) : (
                         <div className="w-16 h-12 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-300 text-xs font-mono shrink-0">
@@ -1316,12 +1539,7 @@ export default function AdminDashboard() {
                           {p.title || p.name}
                         </div>
                         <div className="text-xs text-cyan-300 font-mono">
-                          {p.priceDzd} د.ج | صافي الربح: {econ.netProfitDzd} د.ج |{" "}
-                          {p.activationMethod === "EMAIL_INVITE"
-                            ? "📧 دعوة إيميل"
-                            : p.activationMethod === "ACCOUNT"
-                            ? "👤 حساب"
-                            : "🔑 كود"}
+                          {p.priceDzd} د.ج | صافي الربح: {econ.netProfitDzd} د.ج
                         </div>
                       </div>
                     </div>
@@ -1351,7 +1569,7 @@ export default function AdminDashboard() {
       )}
 
       {/* ====================================================================
-          4. تبويب أكواد البرومو والخصومات (Promo Codes Manager)
+          4. تبويب أكواد البرومو
          ==================================================================== */}
       {activeTab === "promos" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -1365,7 +1583,7 @@ export default function AdminDashboard() {
             </h3>
             <div>
               <label className="text-xs text-slate-300 block mb-1">
-                رمز الكود (مثال: REV10 أو RAMADAN25):
+                رمز الكود (مثال: REV10):
               </label>
               <input
                 type="text"
@@ -1395,7 +1613,7 @@ export default function AdminDashboard() {
               className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>إضافة وتفعيل الكود في المتجر</span>
+              <span>إضافة وتفعيل الكود في السحابة</span>
             </button>
           </form>
 
@@ -1443,7 +1661,7 @@ export default function AdminDashboard() {
       )}
 
       {/* ====================================================================
-          5. تبويب المنشورات وإرسال النشرات الإخبارية
+          5. تبويب المنشورات وإرسال النشرات
          ==================================================================== */}
       {activeTab === "posts" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -1454,7 +1672,7 @@ export default function AdminDashboard() {
             <h3 className="font-black text-base text-cyan-300">
               {editingPostId
                 ? "تعديل المنشور"
-                : "نشر خبر / عرض أو إرسال نشرة على تيليجرام"}
+                : "نشر خبر / عرض في المتجر (يُحفظ في site_config ويظهر للهواتف فوراً)"}
             </h3>
             <input
               type="text"
@@ -1485,7 +1703,7 @@ export default function AdminDashboard() {
                 type="submit"
                 className="py-3 rounded-xl bg-cyan-400 text-slate-950 font-black text-xs cursor-pointer"
               >
-                {editingPostId ? "حفظ التعديل" : "نشر في واجهة الموقع"}
+                {editingPostId ? "حفظ التعديل" : "نشر في الموقع الآن"}
               </button>
               <button
                 type="button"
@@ -1546,7 +1764,7 @@ export default function AdminDashboard() {
       )}
 
       {/* ====================================================================
-          6. تبويب خزنة الأكواد السرية
+          6. تبويب خزنة الأكواد
          ==================================================================== */}
       {activeTab === "vault" && (
         <div className="cyber-card p-6 space-y-4">
@@ -1588,7 +1806,7 @@ export default function AdminDashboard() {
       )}
 
       {/* ====================================================================
-          7. تبويب التحليلات المالية والرسوم البيانية
+          7. تبويب التحليلات المالية
          ==================================================================== */}
       {activeTab === "analytics" && (
         <div className="space-y-6">
@@ -1678,7 +1896,7 @@ export default function AdminDashboard() {
       )}
 
       {/* ====================================================================
-          8. تبويب إدارة الموظفين والصلاحيات (خاص بالـ CEO فقط)
+          8. تبويب الموظفين (CEO فقط)
          ==================================================================== */}
       {activeTab === "staff" && currentAdmin.role === "CEO" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -1760,7 +1978,7 @@ export default function AdminDashboard() {
               type="submit"
               className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 font-black text-xs cursor-pointer"
             >
-              اعتماد الموظف وتفعيل كوده
+              اعتماد الموظف وتفعيل كوده في السحابة
             </button>
           </form>
 
@@ -1768,9 +1986,6 @@ export default function AdminDashboard() {
             <h3 className="font-black text-lg text-white">
               فريق العمل والموظفين الحاليين ({staff.length})
             </h3>
-            <p className="text-xs text-slate-400">
-              كود الـ CEO الخاص بك محمي ومخفي تماماً ولا يظهر في هذه القائمة لأي شخص.
-            </p>
             <div className="space-y-3">
               {staff.map((member) => (
                 <div
@@ -1804,21 +2019,15 @@ export default function AdminDashboard() {
       )}
 
       {/* ====================================================================
-          9. تبويب إعدادات وسائل الدفع (CCP / BaridiMob / USDT) + التواصل + OpenRouter AI
+          9. تبويب إعدادات وسائل الدفع + البوت + BYTEZ AI
          ==================================================================== */}
       {activeTab === "settings" && (
         <div className="space-y-6">
-          {/* أ) إدارة وسائل الدفع المرنة */}
           <div className="cyber-card p-6 space-y-4">
             <div className="flex items-center gap-2 text-cyan-300 font-black text-lg">
               <CreditCard className="w-5 h-5" />
               <span>إدارة وسائل الدفع الرسمية (CCP • BaridiMob • USDT • RedotPay)</span>
             </div>
-            <p className="text-xs text-slate-300">
-              يمكنك تفعيل أو إيقاف أو تغيير رقم حساب CCP أو BaridiMob أو عنوان محفظة
-              USDT في أي لحظة، وستتحدث مباشرة في سلة المشتريات للزبائن.
-            </p>
-
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {(config.paymentMethods || []).map((pm) => (
                 <div
@@ -1903,7 +2112,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ب) إعدادات الذكاء الاصطناعي (BYTEZ AI + OpenRouter) وتوكن البوت — حفظ سحابي تلقائي */}
+          {/* إعدادات الذكاء الاصطناعي (BYTEZ AI + OpenRouter) وتوكن البوت */}
           <div className="cyber-card p-6 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-cyan-300 font-black text-lg">
@@ -1913,7 +2122,7 @@ export default function AdminDashboard() {
                 </span>
               </div>
               <span className="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-xs font-bold">
-                ☁️ حفظ ومزامنة سحابية تلقائية فور الكتابة ✓
+                ☁️ يُحفظ تلقائياً في جدول site_config
               </span>
             </div>
 
@@ -1952,7 +2161,7 @@ export default function AdminDashboard() {
 
               <div>
                 <label className="text-xs text-amber-300 font-bold block mb-1">
-                  مفتاح BYTEZ API Key (يُحفظ ويعمل تلقائياً):
+                  مفتاح BYTEZ API Key:
                 </label>
                 <input
                   type="password"
@@ -1967,7 +2176,7 @@ export default function AdminDashboard() {
 
               <div>
                 <label className="text-xs text-amber-300 font-bold block mb-1">
-                  اسم موديل BYTEZ (مثال: Qwen/Qwen2.5-7B-Instruct):
+                  اسم موديل BYTEZ:
                 </label>
                 <input
                   type="text"
@@ -1983,7 +2192,7 @@ export default function AdminDashboard() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-cyan-500/15">
               <div>
-                <label className="text-xs text-slate-300 block mb-1">
+                <label className="text-xs text-emerald-300 font-bold block mb-1">
                   توكن بوت تيليجرام (TELEGRAM_BOT_TOKEN):
                 </label>
                 <input
@@ -1992,8 +2201,8 @@ export default function AdminDashboard() {
                   onChange={(e) =>
                     setConfig({ telegramBotToken: e.target.value.trim() })
                   }
-                  placeholder="7482910...:AAH..."
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-white font-mono"
+                  placeholder="الصق التوكن من @BotFather هنا..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-emerald-400/50 text-xs text-white font-mono"
                 />
               </div>
 
@@ -2027,24 +2236,49 @@ export default function AdminDashboard() {
                 />
               </div>
             </div>
+
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={sendTelegramTestMessage}
+                className="px-5 py-3 rounded-xl bg-emerald-400 text-slate-950 font-black text-xs flex items-center gap-2 cursor-pointer"
+              >
+                <Send className="w-4 h-4" />
+                <span>🔔 اختبار إرسال رسالة لحسابك في تيليجرام الآن</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={activateTelegramWebhook}
+                className="px-5 py-3 rounded-xl bg-cyan-500/15 border border-cyan-400/40 text-cyan-300 font-bold text-xs flex items-center gap-2 cursor-pointer hover:bg-cyan-500/25"
+              >
+                <Bot className="w-4 h-4" />
+                <span>🔗 تفعيل ربط البوت (@{config.telegramBotUsername})</span>
+              </button>
+            </div>
+
+            {webhookStatus && (
+              <div className="p-3 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-cyan-300 font-bold">
+                {webhookStatus}
+              </div>
+            )}
           </div>
 
-          {/* ج) روابط منصات التواصل الاجتماعي وسعر الصرف */}
+          {/* حسابات التواصل الاجتماعي */}
           <div className="cyber-card p-6 space-y-4">
             <h3 className="font-black text-base text-white">
-              حسابات التواصل الاجتماعي الرسمية (تظهر في الموقع وترتبط بالطلبات)
+              حسابات التواصل الاجتماعي الرسمية
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <label className="text-xs text-slate-300 block mb-1">
-                  رقم واتساب الرسمي (مع رمز الدولة 213):
+                  رقم واتساب الرسمي (مع 213):
                 </label>
                 <input
                   type="text"
                   value={config.whatsappSupport}
                   onChange={(e) => setConfig({ whatsappSupport: e.target.value })}
-                  placeholder="213550000000"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-white font-mono"
                 />
               </div>
@@ -2056,7 +2290,6 @@ export default function AdminDashboard() {
                   type="text"
                   value={config.instagramPage}
                   onChange={(e) => setConfig({ instagramPage: e.target.value })}
-                  placeholder="revelio.digital"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-white font-mono"
                 />
               </div>
@@ -2068,7 +2301,6 @@ export default function AdminDashboard() {
                   type="text"
                   value={config.facebookPage}
                   onChange={(e) => setConfig({ facebookPage: e.target.value })}
-                  placeholder="revelio.digital.dz"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-white font-mono"
                 />
               </div>
@@ -2080,13 +2312,12 @@ export default function AdminDashboard() {
                   type="text"
                   value={config.tiktokPage}
                   onChange={(e) => setConfig({ tiktokPage: e.target.value })}
-                  placeholder="@revelio.digital"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-white font-mono"
                 />
               </div>
               <div>
                 <label className="text-xs text-slate-300 block mb-1">
-                  معرف بوت تيليجرام (بدون @):
+                  معرف بوت تيليجرام:
                 </label>
                 <input
                   type="text"
@@ -2096,13 +2327,12 @@ export default function AdminDashboard() {
                       telegramBotUsername: e.target.value.replace("@", "").trim(),
                     })
                   }
-                  placeholder="REVELIO_ASSISTANT_BOT"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-white font-mono"
                 />
               </div>
               <div>
                 <label className="text-xs text-slate-300 block mb-1">
-                  سعر صرف الدولار مقابل الدينار (DZD Rate):
+                  سعر صرف الدولار (DZD Rate):
                 </label>
                 <input
                   type="number"
@@ -2113,33 +2343,14 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() =>
-                  alert("✅ تم حفظ جميع إعدادات الدفع، التواصل، والذكاء الاصطناعي بنجاح!")
-                }
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 font-black text-xs flex items-center gap-2 cursor-pointer"
-              >
-                <Save className="w-4 h-4" />
-                <span>حفظ جميع الإعدادات</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={activateTelegramWebhook}
-                className="px-5 py-3 rounded-xl bg-cyan-500/15 border border-cyan-400/40 text-cyan-300 font-bold text-xs flex items-center gap-2 cursor-pointer hover:bg-cyan-500/25"
-              >
-                <Bot className="w-4 h-4" />
-                <span>تفعيل الربط المباشر لبوت @{config.telegramBotUsername}</span>
-              </button>
-            </div>
-
-            {webhookStatus && (
-              <div className="p-3 rounded-xl bg-slate-900 border border-cyan-500/30 text-xs text-cyan-300">
-                {webhookStatus}
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => setConfig({})}
+              className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 font-black text-xs flex items-center gap-2 cursor-pointer"
+            >
+              <Save className="w-4 h-4" />
+              <span>حفظ ومزامنة جميع الإعدادات في السحابة</span>
+            </button>
           </div>
         </div>
       )}
