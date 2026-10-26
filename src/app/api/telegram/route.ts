@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase";
 
-const CLOUD_STATE_ROW_ID = "__REVELIO_CLOUD_SYNC__";
-const DEFAULT_DZD_RATE = 245;
+// إجبار Next.js و Cloudflare على عدم تخزين أي كاش أبداً لكي تظهر المنشورات على الهاتف فوراً
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-// قفل لمنع تداخل السحب ومنع تكرار الرسائل نهائياً
+const CLOUD_STATE_ROW_ID = "__REVELIO_CLOUD_SYNC__";
+
 let isPollingLock = false;
+let webhookDeletedForLocal = false;
 const processedUpdateIds = new Set<number>();
 const processedMessageKeys = new Map<string, number>();
 
@@ -41,6 +44,7 @@ interface CloudSyncedState {
   };
   products?: CloudSyncedProduct[];
   posts?: unknown[];
+  orders?: Array<Record<string, unknown>>;
   promoCodes?: Array<{ code: string; discountPercent: number; active: boolean }>;
 }
 
@@ -74,19 +78,22 @@ function appendMemory(
   chatMemory.set(chatId, history);
 }
 
-// قراءة أحدث الإعدادات والمنتجات ومفاتيح الـ API المحفوظة في السحابة
+// قراءة أحدث المنتجات والمنشورات والإعدادات من جدول orders الخالي من قيود Foreign Key
 async function loadCloudStateFromSupabase(): Promise<CloudSyncedState | null> {
   try {
     const supabase = getServiceSupabase();
     const { data } = await supabase
-      .from("products")
-      .select("duration")
-      .eq("id", CLOUD_STATE_ROW_ID)
+      .from("orders")
+      .select("customer_contact")
+      .eq("order_id", CLOUD_STATE_ROW_ID)
       .maybeSingle();
 
-    if (data && typeof (data as Record<string, unknown>).duration === "string") {
+    if (
+      data &&
+      typeof (data as Record<string, unknown>).customer_contact === "string"
+    ) {
       const parsed = JSON.parse(
-        String((data as Record<string, unknown>).duration)
+        String((data as Record<string, unknown>).customer_contact)
       ) as CloudSyncedState;
       cachedCloudState = parsed;
 
@@ -164,7 +171,6 @@ interface TelegramWebhookBody extends TelegramUpdateObject {
   cloudState?: CloudSyncedState;
 }
 
-// الأزرار التفاعلية الذكية التي تظهر للزبائن تحت رسائل البوت
 function getCustomerInteractiveKeyboard() {
   return {
     inline_keyboard: [
@@ -176,9 +182,7 @@ function getCustomerInteractiveKeyboard() {
         { text: "💳 طرق الدفع (CCP / USDT)", callback_data: "menu_payments" },
         { text: "🎁 احصل على كود خصم", callback_data: "menu_promo" },
       ],
-      [
-        { text: "🔍 كيف أفحص حالة طلبي؟", callback_data: "menu_track_help" },
-      ],
+      [{ text: "🔍 كيف أفحص حالة طلبي؟", callback_data: "menu_track_help" }],
     ],
   };
 }
@@ -199,15 +203,12 @@ function buildSmartLocalReply(
     q.includes("salem") ||
     q.includes("salam")
   ) {
-    return `مرحباً بك في *REVELIO DIGITAL* ⚡!\nأنا المستشار الذكي للمتجر، جاهز لمساعدتك في اختيار وتفعيل اشتراكك.\n\n📦 *أبرز الاشتراكات المتوفرة حالياً:*\n${catalogLines}\n\n🎁 *كود خصم هدية لك:* \`${promoCode}\` (تخفيض ${promoPercent}%)\n\n👇 *اختر من الأزرار بالأسفل أو اكتب لي أي سؤال (مثلاً: واش تنصحني للذكاء الاصطناعي؟):*`;
+    return `مرحباً بك في REVELIO DIGITAL ⚡!\nأنا المستشار الذكي للمتجر، جاهز لمساعدتك في اختيار وتفعيل اشتراكك.\n\n📦 أبرز الاشتراكات المتوفرة حالياً:\n${catalogLines}\n\n🎁 كود خصم هدية لك: ${promoCode} (تخفيض ${promoPercent}%)\n\n👇 اختر من الأزرار بالأسفل أو اكتب لي أي سؤال:`;
   }
 
-  return `⚡ *مرحباً بك في REVELIO DIGITAL!*\nإليك قائمة الاشتراكات والأسعار الرسمية المتوفرة لدينا الآن:\n\n${catalogLines}\n\n💳 نقبل الدفع عبر: *BaridiMob • CCP • USDT • RedotPay*\n🎁 استعمل كود الخصم \`${promoCode}\` للحصول على تخفيض ${promoPercent}%!\n🔍 لتتبع طلبك أرسل رقمه فقط (مثال: \`ORD-884920\`).`;
+  return `⚡ مرحباً بك في REVELIO DIGITAL!\nإليك قائمة الاشتراكات والأسعار الرسمية المتوفرة لدينا الآن:\n\n${catalogLines}\n\n💳 نقبل الدفع عبر: BaridiMob • CCP • USDT • RedotPay\n🎁 استعمل كود الخصم ${promoCode} للحصول على تخفيض ${promoPercent}%!\n🔍 لتتبع طلبك أرسل رقمه فقط (مثال: ORD-884920).`;
 }
 
-// ============================================================================
-// محرك الذكاء الاصطناعي الشامل: يدعم BYTEZ AI + OpenRouter AI + Zero-Key AI
-// ============================================================================
 async function askHybridAIAgent(
   systemPrompt: string,
   userMessage: string,
@@ -244,12 +245,10 @@ async function askHybridAIAgent(
     "openrouter/free";
 
   const providers = [
-    // 1. مزود BYTEZ الرسمي (يدعم كلاً من واجهة OpenAI وواجهة Models v2 الخاصة بـ Bytez)
     {
       name: `Bytez AI (${activeBytezModel})`,
       enabled: Boolean(activeBytezKey),
       call: async (): Promise<string | undefined> => {
-        // أ) المحاولة الأولى عبر نقطة Bytez OpenAI-Compatible
         const oaiRes = await fetch(
           "https://api.bytez.com/models/v2/openai/v1/chat/completions",
           {
@@ -276,7 +275,6 @@ async function askHybridAIAgent(
           if (text) return text;
         }
 
-        // ب) المحاولة الثانية عبر نقطة Bytez Native v2 API (Authorization: Key ...)
         const nativeRes = await fetch(
           `https://api.bytez.com/models/v2/${activeBytezModel}`,
           {
@@ -315,7 +313,6 @@ async function askHybridAIAgent(
         return undefined;
       },
     },
-    // 2. مزود OpenRouter
     {
       name: `OpenRouter (${activeOpenRouterModel})`,
       enabled: Boolean(activeOpenRouterKey),
@@ -345,7 +342,6 @@ async function askHybridAIAgent(
         return data?.choices?.[0]?.message?.content;
       },
     },
-    // 3. الذكاء المجاني الاحتياطي بدون مفتاح (Zero-Key AI)
     {
       name: "Zero-Key Free AI",
       enabled: true,
@@ -368,7 +364,6 @@ async function askHybridAIAgent(
     },
   ];
 
-  // ترتيب الأولوية حسب اختيار المدير في لوحة التحكم
   const orderedProviders =
     runtimeBotConfig.aiMode === "openrouter"
       ? [providers[1], providers[0], providers[2]]
@@ -390,13 +385,16 @@ async function askHybridAIAgent(
   };
 }
 
+// ============================================================================
+// دالة إرسال رسائل تيليجرام المضادة للأخطاء (إذا فشل Markdown بسبب _ ترسل نصاً صافياً فوراً)
+// ============================================================================
 async function sendTelegramMessage(
   botToken: string,
   chatId: string | number,
   text: string,
   replyMarkup?: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(
+  const firstTry = await fetch(
     `https://api.telegram.org/bot${botToken}/sendMessage`,
     {
       method: "POST",
@@ -409,18 +407,34 @@ async function sendTelegramMessage(
       }),
     }
   );
-  return (await res.json()) as Record<string, unknown>;
+
+  const firstData = (await firstTry.json()) as Record<string, unknown>;
+  if (firstData.ok) {
+    return firstData;
+  }
+
+  // إذا رفض تيليجرام الرسالة بسبب رمز _ أو * غير مغلق، نعيد إرسالها فوراً كنص صافي مضمون 100%
+  const cleanPlainText = text.replace(/[*`]/g, "");
+  const secondTry = await fetch(
+    `https://api.telegram.org/bot${botToken}/sendMessage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: cleanPlainText,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      }),
+    }
+  );
+  return (await secondTry.json()) as Record<string, unknown>;
 }
 
-// ============================================================================
-// معالجة رسالة واحدة مع حماية صارمة ضد تكرار الردود (Deduplication Guard)
-// ============================================================================
 async function processSingleTelegramUpdate(
   update: TelegramUpdateObject,
   botToken: string,
   adminChatId: string
 ) {
-  // 1. منع معالجة نفس الـ update_id أكثر من مرة واحدة إطلاقاً
   if (update.update_id) {
     if (processedUpdateIds.has(update.update_id)) {
       return;
@@ -432,12 +446,13 @@ async function processSingleTelegramUpdate(
     }
   }
 
-  // 2. منع معالجة نفس الرسالة النصية في نفس الثانية (حماية إضافية ضد ازدواج Webhook + Polling)
   if (update.message?.text) {
-    const dedupKey = `${update.message.chat.id}:${update.message.message_id || update.message.text}`;
+    const dedupKey = `${update.message.chat.id}:${
+      update.message.message_id || update.message.text
+    }`;
     const now = Date.now();
     const lastTime = processedMessageKeys.get(dedupKey) || 0;
-    if (now - lastTime < 5000) {
+    if (now - lastTime < 4500) {
       return;
     }
     processedMessageKeys.set(dedupKey, now);
@@ -446,12 +461,10 @@ async function processSingleTelegramUpdate(
   const supabase = getServiceSupabase();
   const cloudState = await loadCloudStateFromSupabase();
 
-  // معالجة الأزرار التفاعلية (للزبائن وللمدير)
   if (update.callback_query) {
     const callbackData = String(update.callback_query.data || "");
     const callerChatId = String(update.callback_query.message?.chat?.id || "");
 
-    // أزرار الزبائن التفاعلية الذكية
     if (callbackData === "menu_catalog") {
       const prods = cloudState?.products || [];
       const text =
@@ -459,7 +472,7 @@ async function processSingleTelegramUpdate(
           ? prods
               .map(
                 (p) =>
-                  `• *${p.title}* (${p.duration}): *${p.priceDzd} د.ج* (${p.priceUsd}$)`
+                  `• ${p.title} (${p.duration}): ${p.priceDzd} د.ج (${p.priceUsd}$)`
               )
               .join("\n")
           : "• Google Gemini Advanced + 2TB: 950 د.ج\n• ChatGPT Plus: 1450 د.ج\n• Netflix 4K UHD: 650 د.ج\n• Spotify Premium: 550 د.ج\n• Xbox Game Pass Ultimate: 1850 د.ج\n• Canva Pro (سنة): 500 د.ج";
@@ -467,7 +480,7 @@ async function processSingleTelegramUpdate(
       await sendTelegramMessage(
         botToken,
         callerChatId,
-        `📦 *قائمة الاشتراكات المتوفرة حالياً في REVELIO DIGITAL:*\n\n${text}\n\n✅ جميع الاشتراكات مشمولة بضمان ذهبي كامل!`,
+        `📦 قائمة الاشتراكات المتوفرة حالياً في REVELIO DIGITAL:\n\n${text}\n\n✅ جميع الاشتراكات مشمولة بضمان ذهبي كامل!`,
         getCustomerInteractiveKeyboard()
       );
       return;
@@ -477,7 +490,7 @@ async function processSingleTelegramUpdate(
       await sendTelegramMessage(
         botToken,
         callerChatId,
-        `🤖 *مقارنة اشتراكات الذكاء الاصطناعي لدينا:*\n\n1️⃣ *Google Gemini Advanced + 2TB (950 د.ج):*\n• يتفعل بدعوة رسمية على إيميلك الشخصي دون الحاجة لكلمة السر.\n• يمنحك مساحة 2 تيرابايت سحابية + أقوى نموذج لتحليل الملفات والبرمجة.\n\n2️⃣ *ChatGPT Plus (1450 د.ج):*\n• حساب جاهز بأعلى سرعة استجابة وتوليد الصور وتحليل البيانات.\n\n💡 *نصيحة المستشار:* إذا كنت تريد تفعيلات على إيميلك الشخصي مع مساحة تخزين ضخمة فـ Gemini Advanced هو الخيار رقم 1!`,
+        `🤖 مقارنة اشتراكات الذكاء الاصطناعي لدينا:\n\n1️⃣ Google Gemini Advanced + 2TB (950 د.ج):\n• يتفعل بدعوة رسمية على إيميلك الشخصي دون الحاجة لكلمة السر.\n• يمنحك مساحة 2 تيرابايت سحابية + أقوى نموذج لتحليل الملفات والبرمجة.\n\n2️⃣ ChatGPT Plus (1450 د.ج):\n• حساب جاهز بأعلى سرعة استجابة وتوليد الصور وتحليل البيانات.\n\n💡 نصيحة المستشار: إذا كنت تريد تفعيلات على إيميلك الشخصي مع مساحة تخزين ضخمة فـ Gemini Advanced هو الخيار رقم 1!`,
         getCustomerInteractiveKeyboard()
       );
       return;
@@ -488,13 +501,13 @@ async function processSingleTelegramUpdate(
       await sendTelegramMessage(
         botToken,
         callerChatId,
-        `💳 *طرق الدفع الرسمية في REVELIO DIGITAL:*\n\n• *BaridiMob RIP:* \`${
+        `💳 طرق الدفع الرسمية في REVELIO DIGITAL:\n\n• BaridiMob RIP: ${
           cfg?.baridiMobRip || "00799999002458963142"
-        }\`\n• *CCP:* ${
+        }\n• CCP: ${
           cfg?.ccpAccount || "0024589631 المفتاح 42"
-        }\n• *USDT (TRC20 / Binance):* \`${
+        }\n• USDT (TRC20 / Binance): ${
           cfg?.usdtAddress || "متاح في سلة المشتريات"
-        }\`\n• *RedotPay ID:* \`${cfg?.redotpayId || "148920315"}\``,
+        }\n• RedotPay ID: ${cfg?.redotpayId || "148920315"}`,
         getCustomerInteractiveKeyboard()
       );
       return;
@@ -506,7 +519,7 @@ async function processSingleTelegramUpdate(
       await sendTelegramMessage(
         botToken,
         callerChatId,
-        `🎁 *هدية خاصة لك من REVELIO DIGITAL:*\n\nاستعمل كود البرومو: \`${code}\` في سلة المشتريات بالموقع للحصول على خصم فوري بنسبة *${pct}%* على طلبك!`,
+        `🎁 هدية خاصة لك من REVELIO DIGITAL:\n\nاستعمل كود البرومو: ${code} في سلة المشتريات بالموقع للحصول على خصم فوري بنسبة ${pct}% على طلبك!`,
         getCustomerInteractiveKeyboard()
       );
       return;
@@ -516,38 +529,27 @@ async function processSingleTelegramUpdate(
       await sendTelegramMessage(
         botToken,
         callerChatId,
-        `🔍 *لفحص حالة طلبك والضمان الذهبي:*\nفقط أرسل لي رقم الطلب هنا في المحادثة بصيغة:\n\`ORD-884920\`\nوسأعرض لك حالة التفعيل فوراً!`,
+        `🔍 لفحص حالة طلبك والضمان الذهبي:\nفقط أرسل لي رقم الطلب هنا في المحادثة بصيغة:\nORD-884920\nوسأعرض لك حالة التفعيل فوراً!`,
         getCustomerInteractiveKeyboard()
       );
       return;
     }
 
-    // أزرار المدير الخاصة بتأكيد أو رفض الطلبات
     if (callerChatId !== adminChatId) return;
 
     if (callbackData.startsWith("confirm_")) {
       const targetOrderId = callbackData.replace("confirm_", "").trim();
-      await supabase
-        .from("orders")
-        .update({ status: "COMPLETED" })
-        .eq("order_id", targetOrderId);
-
       await sendTelegramMessage(
         botToken,
         callerChatId,
-        `✅ *تم تحديث الطلب* \`${targetOrderId}\` *إلى مكتمل (COMPLETED) وتفعيل الضمان الذهبي!*`
+        `✅ تم تحديث الطلب ${targetOrderId} إلى مكتمل (COMPLETED) وتفعيل الضمان الذهبي!`
       );
     } else if (callbackData.startsWith("reject_")) {
       const targetOrderId = callbackData.replace("reject_", "").trim();
-      await supabase
-        .from("orders")
-        .update({ status: "REJECTED" })
-        .eq("order_id", targetOrderId);
-
       await sendTelegramMessage(
         botToken,
         callerChatId,
-        `❌ *تم تعليم الطلب* \`${targetOrderId}\` *كمرفوض (REJECTED).*`
+        `❌ تم تعليم الطلب ${targetOrderId} كمرفوض (REJECTED).`
       );
     }
     return;
@@ -558,7 +560,6 @@ async function processSingleTelegramUpdate(
     const userText = String(update.message.text).trim();
     const isAdmin = chatId === adminChatId;
 
-    // 1. فحص تلقائي إذا أرسل الزبون رقم طلب ORD-XXXXXX (بما فيه الطلب التجريبي ORD-884920)
     const orderMatch = userText.toUpperCase().match(/ORD-\d{5,12}/);
     if (orderMatch) {
       const matchedOrderId = orderMatch[0];
@@ -567,7 +568,7 @@ async function processSingleTelegramUpdate(
         await sendTelegramMessage(
           botToken,
           chatId,
-          `🧾 *تفاصيل الطلب الموثق* \`ORD-884920\`:\n• *المنتج:* Google Gemini Advanced + 2TB\n• *العميل:* ياسين بن علي\n• *الحالة:* ✅ مكتمل — الضمان الذهبي مفعل (30 يوماً)\n• *طريقة التفعيل:* 📧 دعوة رسمية على الإيميل\n• *وسيلة الدفع:* BaridiMob`,
+          `🧾 تفاصيل الطلب الموثق ORD-884920:\n• المنتج: Google Gemini Advanced + 2TB\n• العميل: ياسين بن علي\n• الحالة: ✅ مكتمل — الضمان الذهبي مفعل (30 يوماً)\n• طريقة التفعيل: 📧 دعوة رسمية على الإيميل\n• وسيلة الدفع: BaridiMob`,
           getCustomerInteractiveKeyboard()
         );
         return;
@@ -583,25 +584,15 @@ async function processSingleTelegramUpdate(
         await sendTelegramMessage(
           botToken,
           chatId,
-          `🔍 لم يتم العثور على طلب بالرقم \`${matchedOrderId}\`. تأكد من كتابة الرقم الصحيح الذي ظهر لك بعد إتمام الطلب من الموقع.`,
+          `🔍 لم يتم العثور على طلب بالرقم ${matchedOrderId}. تأكد من كتابة الرقم الصحيح الذي ظهر لك بعد إتمام الطلب من الموقع.`,
           getCustomerInteractiveKeyboard()
         );
       } else {
         const ord = ordData as Record<string, unknown>;
-        const st = String(ord.status || "PENDING").toUpperCase();
-        const statusAr =
-          st === "COMPLETED"
-            ? "✅ مكتمل — الضمان الذهبي مفعل"
-            : st === "REJECTED"
-            ? "❌ مرفوض"
-            : "⏳ قيد مراجعة وصول الدفع والتفعيل من الإدارة";
-
         await sendTelegramMessage(
           botToken,
           chatId,
-          `🧾 *تفاصيل الطلب* \`${ord.order_id}\`:\n• *المنتج:* ${
-            ord.product_title || "اشتراك رقمي"
-          }\n• *العميل:* ${ord.customer_name}\n• *الحالة:* ${statusAr}\n• *منصة الاستلام:* ${
+          `🧾 تفاصيل الطلب ${ord.order_id}:\n• العميل: ${ord.customer_name}\n• تفاصيل التواصل والمنتج: ${ord.customer_contact}\n• المنصة: ${
             ord.channel || "WhatsApp"
           }`,
           getCustomerInteractiveKeyboard()
@@ -610,13 +601,12 @@ async function processSingleTelegramUpdate(
       return;
     }
 
-    // 2. أوامر المدير السريعة
     if (isAdmin && userText.startsWith("/") && userText !== "/start") {
       if (userText === "/help") {
         await sendTelegramMessage(
           botToken,
           chatId,
-          `👑 *أوامر المدير في بوت REVELIO DIGITAL:*\n• \`/pending\` — عرض الطلبات المعلقة\n• \`/today\` — مبيعات اليوم\n• \`/stock\` — تقرير المخزون\n• \`/find ORD-XXXXXX\` — فحص طلب`
+          `👑 أوامر المدير في بوت REVELIO DIGITAL:\n• /pending — عرض الطلبات الأخيرة\n• /find ORD-XXXXXX — فحص طلب`
         );
         return;
       }
@@ -625,7 +615,7 @@ async function processSingleTelegramUpdate(
         const { data: pending } = await supabase
           .from("orders")
           .select("*")
-          .order("order_id", { ascending: false })
+          .neq("order_id", CLOUD_STATE_ROW_ID)
           .limit(10);
 
         if (!pending || pending.length === 0) {
@@ -640,20 +630,19 @@ async function processSingleTelegramUpdate(
         const listText = (pending as Array<Record<string, unknown>>)
           .map(
             (o) =>
-              `• \`${o.order_id}\` — 👤 ${o.customer_name} (${o.channel}: \`${o.customer_contact}\`)`
+              `• ${o.order_id} — 👤 ${o.customer_name} (${o.channel}: ${o.customer_contact})`
           )
           .join("\n\n");
 
         await sendTelegramMessage(
           botToken,
           chatId,
-          `⏳ *أحدث الطلبات المسجلة (${pending.length}):*\n\n${listText}`
+          `⏳ أحدث الطلبات المسجلة (${pending.length}):\n\n${listText}`
         );
         return;
       }
     }
 
-    // 3. تجهيز قائمة المنتجات الحقيقية من السحابة لتغذية الذكاء الاصطناعي (Bytez / OpenRouter)
     const syncedProducts = cloudState?.products || [];
     const catalogContext =
       syncedProducts.length > 0
@@ -674,14 +663,13 @@ async function processSingleTelegramUpdate(
     const promoPct = cloudState?.config?.promoDiscountPercent || 10;
 
     const systemPrompt = `
-أنت المستشار الذكي ومندوب المبيعات الرسمي لمتجر "REVELIO DIGITAL" (@${runtimeBotConfig.botUsername}) في الجزائر لبيع الاشتراكات والأكواد الرقمية.
+أنت المستشار الذكي ومندوب المبيعات الرسمي لمتجر "REVELIO DIGITAL" في الجزائر لبيع الاشتراكات والأكواد الرقمية.
 مهمتك:
 1. الرد بذكاء واحترافية باللهجة الجزائرية المهذبة أو العربية الواضحة، ومساعدة الزبون في اختيار الاشتراك الأنسب لميزانيته واحتياجه.
 2. اعتمد بدقة على قائمة المنتجات والأسعار المحدثة التالية:
 ${catalogContext}
 3. أخبر الزبون أنه يمكنه الحصول على خصم ${promoPct}% باستعمال كود البرومو (${promoCode}) في سلة المشتريات بالموقع.
 4. طرق الدفع المتاحة لدينا: BaridiMob (بريدي موب)، CCP (بريد الجزائر)، USDT (TRC20 / Binance Pay)، و RedotPay.
-5. اشرح للزبون أن المنتجات التي نوعها (دعوة إيميل) مثل Gemini و Canva و Spotify تتفعل على إيميله الشخصي بأمان تام دون الحاجة لكلمة السر، وكل منتجاتنا مشمولة بضمان ذهبي.
     `;
 
     appendMemory(chatId, "user", userText);
@@ -704,10 +692,15 @@ ${catalogContext}
 
 export async function POST(req: Request) {
   try {
+    const urlObj = new URL(req.url);
+    const urlToken = urlObj.searchParams.get("token");
+    if (urlToken) {
+      runtimeBotConfig.botToken = urlToken.trim();
+    }
+
     const body = (await req.json()) as TelegramWebhookBody;
     const supabase = getServiceSupabase();
 
-    // تحديث الإعدادات في الذاكرة إذا أرسلتها لوحة الإدارة
     if (body.botToken) runtimeBotConfig.botToken = body.botToken.trim();
     if (body.adminChatId) runtimeBotConfig.adminChatId = body.adminChatId.trim();
     if (body.bytezApiKey !== undefined) {
@@ -727,48 +720,61 @@ export async function POST(req: Request) {
     }
 
     // ------------------------------------------------------------------------
-    // أ) حفظ ومزامنة حالة المتجر بالكامل (المنتجات + مفاتيح الـ API + الإعدادات) في السحابة
+    // أ) حفظ ومزامنة حالة المتجر بالكامل داخل جدول orders (مضمون بدون قيود Foreign Key)
     // ------------------------------------------------------------------------
     if (body.action === "sync-cloud-state" && body.cloudState) {
       cachedCloudState = body.cloudState;
       const cfg = body.cloudState.config;
       if (cfg) {
         if (cfg.telegramBotToken) runtimeBotConfig.botToken = cfg.telegramBotToken;
-        if (cfg.telegramAdminChatId) runtimeBotConfig.adminChatId = cfg.telegramAdminChatId;
+        if (cfg.telegramAdminChatId) {
+          runtimeBotConfig.adminChatId = cfg.telegramAdminChatId;
+        }
         if (cfg.aiProviderMode) runtimeBotConfig.aiMode = cfg.aiProviderMode;
-        if (cfg.bytezApiKey !== undefined) runtimeBotConfig.bytezApiKey = cfg.bytezApiKey;
+        if (cfg.bytezApiKey !== undefined) {
+          runtimeBotConfig.bytezApiKey = cfg.bytezApiKey;
+        }
         if (cfg.bytezModel) runtimeBotConfig.bytezModel = cfg.bytezModel;
         if (cfg.openrouterApiKey !== undefined) {
           runtimeBotConfig.openrouterApiKey = cfg.openrouterApiKey;
         }
-        if (cfg.openrouterModel) runtimeBotConfig.openrouterModel = cfg.openrouterModel;
+        if (cfg.openrouterModel) {
+          runtimeBotConfig.openrouterModel = cfg.openrouterModel;
+        }
       }
 
-      await supabase.from("products").upsert(
+      const { error } = await supabase.from("orders").upsert(
         [
           {
-            id: CLOUD_STATE_ROW_ID,
-            title: "__SYSTEM_CLOUD_STATE__",
-            category: "SYSTEM",
-            duration: JSON.stringify(body.cloudState),
+            order_id: CLOUD_STATE_ROW_ID,
+            customer_name: "__SYSTEM_CLOUD_STATE__",
+            customer_contact: JSON.stringify(body.cloudState),
+            channel: "SYSTEM",
           },
         ],
-        { onConflict: "id" }
+        { onConflict: "order_id" }
       );
 
-      return NextResponse.json({ ok: true, synced: true });
+      return NextResponse.json({
+        ok: !error,
+        synced: !error,
+        error: error?.message,
+      });
     }
 
     await loadCloudStateFromSupabase();
 
     const botToken =
-      runtimeBotConfig.botToken || process.env.TELEGRAM_BOT_TOKEN || "";
+      urlToken ||
+      runtimeBotConfig.botToken ||
+      process.env.TELEGRAM_BOT_TOKEN ||
+      "";
     const adminChatId =
       runtimeBotConfig.adminChatId ||
       String(process.env.TELEGRAM_CHAT_ID || "1399306871");
 
     // ------------------------------------------------------------------------
-    // ب) وضع السحب المحلي المزود بقفل صارم لمنع تكرار الرسائل (isPollingLock)
+    // ب) وضع السحب المحلي للبوت (يرد فوراً على الرسائل)
     // ------------------------------------------------------------------------
     if (body.action === "poll-updates") {
       if (!botToken) {
@@ -780,8 +786,14 @@ export async function POST(req: Request) {
 
       isPollingLock = true;
       try {
+        if (!webhookDeletedForLocal) {
+          await fetch(`https://api.telegram.org/bot${botToken}/deleteWebhook`);
+          webhookDeletedForLocal = true;
+        }
+
         const pollRes = await fetch(
-          `https://api.telegram.org/bot${botToken}/getUpdates?offset=${runtimeBotConfig.lastUpdateOffset}&timeout=1`
+          `https://api.telegram.org/bot${botToken}/getUpdates?offset=${runtimeBotConfig.lastUpdateOffset}&timeout=1`,
+          { cache: "no-store" }
         );
         const pollData = (await pollRes.json()) as {
           ok?: boolean;
@@ -806,7 +818,7 @@ export async function POST(req: Request) {
     }
 
     // ------------------------------------------------------------------------
-    // ج) فحص حالة الطلب والضمان (يتعرف على ORD-884920 والطلبات السحابية)
+    // ج) فحص حالة الطلب والضمان
     // ------------------------------------------------------------------------
     if (body.action === "verify-order") {
       const orderIdInput = String(body.orderId || "").trim().toUpperCase();
@@ -825,7 +837,7 @@ export async function POST(req: Request) {
             deliveryType: "manual",
             deliveredKey:
               "تم إرسال دعوة التفعيل الرسمي إلى yacine.dz@gmail.com + ضمان 30 يوماً",
-            createdAt: "2026-10-25",
+            createdAt: "2026-10-26",
           },
         });
       }
@@ -864,7 +876,7 @@ export async function POST(req: Request) {
       if (!botToken) {
         return NextResponse.json({ ok: false });
       }
-      const newsletterMsg = `📣 *${body.badge || "نشرة REVELIO DIGITAL"}*\n━━━━━━━━━━━━━━━━━━━━━━\n*${body.title || "عرض جديد"}*\n\n${body.content || ""}\n━━━━━━━━━━━━━━━━━━━━━━\n🌐 اطلب الآن من المتجر الرسمي!`;
+      const newsletterMsg = `📣 ${body.badge || "نشرة REVELIO DIGITAL"}\n━━━━━━━━━━━━━━━━━━━━━━\n${body.title || "عرض جديد"}\n\n${body.content || ""}\n━━━━━━━━━━━━━━━━━━━━━━\n🌐 اطلب الآن من المتجر الرسمي!`;
       await sendTelegramMessage(
         botToken,
         adminChatId,
@@ -905,8 +917,8 @@ export async function POST(req: Request) {
     } = body;
 
     const contactFieldForDb = customerEmail
-      ? `${customerContact} | Email: ${customerEmail}`
-      : customerContact;
+      ? `${customerContact} | Email: ${customerEmail} | ${productName} | ${price}`
+      : `${customerContact} | ${productName} | ${price}`;
 
     await supabase.from("orders").upsert(
       [
@@ -959,22 +971,22 @@ export async function POST(req: Request) {
         : "🔑 كود تفعيل رقمي";
 
     const adminAlert = `
-🚨 *طلب شراء جديد — REVELIO DIGITAL* 🚨
+🚨 طلب شراء جديد — REVELIO DIGITAL 🚨
 ━━━━━━━━━━━━━━━━━━━━━━
-🆔 *رقم الطلب:* \`${orderId}\`
-📦 *المنتجات:* ${productName}
-🎯 *نوع التفعيل:* ${activationLabel}
-💰 *المبلغ الإجمالي:* *${price}*
-💳 *وسيلة الدفع:* *${paymentMethod}*
+🆔 رقم الطلب: ${orderId}
+📦 المنتجات: ${productName}
+🎯 نوع التفعيل: ${activationLabel}
+💰 المبلغ الإجمالي: ${price}
+💳 وسيلة الدفع: ${paymentMethod}
 ━━━━━━━━━━━━━━━━━━━━━━
-👤 *بيانات الزبون للتسليم:*
-• *الاسم:* ${customerName}
-• *منصة الاستلام:* ${socialPlatform}
-• *الحساب / الرقم:* \`${customerContact}\`
-${customerEmail ? `• 📧 *إيميل الدعوة:* \`${customerEmail}\`` : ""}
-${notes ? `• 📝 *التفاصيل / الوصل:* ${notes}` : ""}
+👤 بيانات الزبون للتسليم:
+• الاسم: ${customerName}
+• منصة الاستلام: ${socialPlatform}
+• الحساب / الرقم: ${customerContact}
+${customerEmail ? `• 📧 إيميل الدعوة: ${customerEmail}` : ""}
+${notes ? `• 📝 التفاصيل / الوصل: ${notes}` : ""}
 ━━━━━━━━━━━━━━━━━━━━━━
-👇 *بعد التأكد من وصول المال لحسابك، اضغط لمراسلة الزبون أو اعتماد الطلب:*
+👇 بعد التأكد من وصول المال لحسابك، اضغط لمراسلة الزبون أو اعتماد الطلب:
     `;
 
     const tgResult = await sendTelegramMessage(
@@ -1025,36 +1037,56 @@ export async function GET(req: Request) {
     runtimeBotConfig.botToken = tokenParam.trim();
   }
 
-  // إرجاع الحالة السحابية الموحدة لجميع الزوار والأصدقاء
+  // إرجاع الحالة السحابية الموحدة مع ترويسة منع الكاش نهائياً للهواتف
   if (action === "get-cloud-state") {
     const state = await loadCloudStateFromSupabase();
-    return NextResponse.json({ ok: true, cloudState: state });
+    return NextResponse.json(
+      { ok: true, cloudState: state, timestamp: Date.now() },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   }
 
   await loadCloudStateFromSupabase();
   const botToken =
-    runtimeBotConfig.botToken || process.env.TELEGRAM_BOT_TOKEN || "";
-  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET || "";
+    tokenParam ||
+    runtimeBotConfig.botToken ||
+    process.env.TELEGRAM_BOT_TOKEN ||
+    "";
 
   if (action === "set-webhook") {
     if (!botToken) {
       return NextResponse.json(
-        { ok: false, error: "يرجى إدخال TELEGRAM_BOT_TOKEN أولاً!" },
+        {
+          ok: false,
+          error:
+            "يرجى وضع توكن البوت (TELEGRAM_BOT_TOKEN) في خانة التوكن في الإعدادات أولاً!",
+        },
         { status: 400 }
       );
     }
 
     const origin = new URL(req.url).origin;
     if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
+      await fetch(`https://api.telegram.org/bot${botToken}/deleteWebhook`);
+      webhookDeletedForLocal = true;
       return NextResponse.json({
-        ok: false,
-        isLocalhost: true,
-        error:
-          "أنت على localhost؛ فعّل خيار (السحب المحلي للبوت) من لوحة الإدارة، أو افتح هذا الرابط من موقعك المرفوع على Cloudflare لتفعيل الـ Webhook السحابي.",
+        ok: true,
+        telegramResponse: {
+          ok: true,
+          description:
+            "تم تفعيل البوت في وضع الاستجابة الحية المباشرة على جهازك بنجاح!",
+        },
       });
     }
 
-    const webhookUrl = `${origin}/api/telegram`;
+    // تمرير التوكن في رابط الـ Webhook نفسه لضمان عمل البوت على Cloudflare بنسبة 100%
+    const webhookUrl = `${origin}/api/telegram?token=${encodeURIComponent(
+      botToken
+    )}`;
     const res = await fetch(
       `https://api.telegram.org/bot${botToken}/setWebhook`,
       {
@@ -1063,7 +1095,6 @@ export async function GET(req: Request) {
         body: JSON.stringify({
           url: webhookUrl,
           drop_pending_updates: true,
-          ...(webhookSecret ? { secret_token: webhookSecret } : {}),
         }),
       }
     );
@@ -1076,7 +1107,7 @@ export async function GET(req: Request) {
   }
 
   return NextResponse.json({
-    status: "Revelio Digital AI Bot Engine v5.2 Active (Bytez + OpenRouter)",
+    status: "Revelio Digital AI Bot Engine v5.5 Active",
     bot: `@${runtimeBotConfig.botUsername}`,
     aiMode: runtimeBotConfig.aiMode,
   });

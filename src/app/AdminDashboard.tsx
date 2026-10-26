@@ -516,33 +516,35 @@ export default function AdminDashboard() {
     });
   };
 
-  // تفعيل Webhook البوت
+  // تفعيل Webhook البوت مع تمرير التوكن المكتوب في الإعدادات مباشرة
   const activateTelegramWebhook = async () => {
     setWebhookStatus("جاري ربط البوت وتفعيل الوكيل الذكي...");
     try {
-      const res = await fetch("/api/telegram?action=set-webhook");
+      const tokenQuery = config.telegramBotToken
+        ? `&token=${encodeURIComponent(config.telegramBotToken.trim())}`
+        : "";
+      const res = await fetch(`/api/telegram?action=set-webhook${tokenQuery}`);
       const data = (await res.json()) as {
         telegramResponse?: { ok?: boolean; description?: string };
         error?: string;
       };
       if (data.telegramResponse?.ok) {
         setWebhookStatus(
-          "✅ تم ربط بوت @REVELIO_ASSISTANT_BOT بالمتجر بنجاح!"
+          "✅ تم ربط بوت @REVELIO_ASSISTANT_BOT وتفعيله بنجاح! أرسل له رسالة الآن في تيليجرام."
         );
       } else {
         setWebhookStatus(
           `⚠️ تنبيه: ${
             data.error ||
             data.telegramResponse?.description ||
-            "تأكد من وضع TELEGRAM_BOT_TOKEN في ملف .env.local أو Cloudflare"
+            "تأكد من لصق توكن البوت في الخانة المخصصة أعلاه أولاً"
           }`
         );
       }
     } catch {
-      setWebhookStatus("⚠️ جرب التفعيل من رابط الموقع المباشر بعد الرفع.");
+      setWebhookStatus("⚠️ تعذر الاتصال، تأكد من تشغيل السيرفر.");
     }
   };
-
   // شاشة تسجيل الدخول السرية (لا تظهر أي تلميح للكود نهائياً)
   if (!currentAdmin) {
     return (

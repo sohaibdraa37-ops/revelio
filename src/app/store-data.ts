@@ -167,7 +167,6 @@ export interface SiteConfig {
   telegramBotToken: string;
   telegramAdminChatId: string;
   enableLocalBotPolling: boolean;
-  // إعدادات الذكاء الاصطناعي الشاملة (Bytez + OpenRouter + Zero-Key)
   aiProviderMode: "bytez" | "openrouter" | "zerokey" | "smart_rules";
   bytezApiKey: string;
   bytezModel: string;
@@ -303,7 +302,7 @@ export const INITIAL_STAFF: StaffMember[] = [
     pinCode: "STAFF01",
     permissions: ["orders", "customers", "products"],
     active: true,
-    createdAt: "2026-10-25",
+    createdAt: "2026-10-26",
   },
 ];
 
@@ -330,7 +329,7 @@ export const DEFAULT_SITE_CONFIG: SiteConfig = {
   telegramChannel: "revelio_digital_channel",
   telegramBotToken: "",
   telegramAdminChatId: "1399306871",
-  enableLocalBotPolling: false,
+  enableLocalBotPolling: true, // مفعل افتراضياً ليرد البوت فوراً
   aiProviderMode: "bytez",
   bytezApiKey: "",
   bytezModel: "Qwen/Qwen2.5-7B-Instruct",
@@ -573,7 +572,7 @@ export const INITIAL_POSTS: StorePost[] = [
     content:
       "متوفر الآن تفعيل رسمي بدعوة مباشرة على إيميلك الشخصي مع ضمان ذهبي شامل. اطلب الآن وسنرسل لك التفعيل فور مراجعة الدفع!",
     badge: "عرض الأسبوع",
-    date: "2026-10-25",
+    date: "2026-10-26",
     active: true,
   },
   {
@@ -582,7 +581,7 @@ export const INITIAL_POSTS: StorePost[] = [
     content:
       "يمكنك الآن اختيار وسيلة الدفع الأنسب لك في سلة المشتريات واستلام اشتراكك (سواء كان كوداً، دعوة إيميل، أو حساباً جاهزاً) عبر واتساب أو إنستغرام أو تيليجرام.",
     badge: "تحديث الدفع",
-    date: "2026-10-25",
+    date: "2026-10-26",
     active: true,
   },
 ];
@@ -607,59 +606,59 @@ export const INITIAL_ORDERS: OrderRecord[] = [
     deliveryType: "manual",
     activationMethod: "EMAIL_INVITE",
     deliveredCode: "تم إرسال دعوة التفعيل الرسمي إلى yacine.dz@gmail.com + ضمان 30 يوماً",
-    createdAt: "2026-10-25",
-    expiresAt: "2026-11-24",
+    createdAt: "2026-10-26",
+    expiresAt: "2026-11-25",
   },
 ];
 
 /**
- * حفظ ومزامنة حالة المتجر بالكامل (المنتجات، الإعدادات، مفاتيح الـ API، المنشورات، البرومو)
- * في السحابة ليراها أي زائر يفتح رابط Cloudflare من أي جهاز آخر
+ * الحفظ السحابي المضمون 100% داخل جدول orders (لأنه لا يحتوي على أي قيود Foreign Key)
+ * بحيث يظهر أي منتج أو منشور جديد على الهاتف وأجهزة الأصدقاء فوراً
  */
 async function syncFullStateToCloud(state: {
   config: SiteConfig;
   products: DigitalProduct[];
   posts: StorePost[];
   promoCodes: PromoCodeItem[];
+  orders?: OrderRecord[];
 }): Promise<boolean> {
+  const payloadObj = {
+    config: state.config,
+    products: state.products,
+    posts: state.posts,
+    promoCodes: state.promoCodes,
+    orders: (state.orders || []).filter((o) => o.orderId !== CLOUD_STATE_ROW_ID),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const payloadJson = JSON.stringify(payloadObj);
+
   try {
-    // 1. المزامنة عبر Server API لضمان تحديث إعدادات البوت والـ AI في الخادم فوراً
+    // 1. إرسال إلى API الخادم لتحديث البوت وقاعدة البيانات من الخادم أيضاً
     fetch("/api/telegram", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      cache: "no-store",
       body: JSON.stringify({
         action: "sync-cloud-state",
-        cloudState: {
-          config: state.config,
-          products: state.products,
-          posts: state.posts,
-          promoCodes: state.promoCodes,
-        },
+        cloudState: payloadObj,
       }),
     }).catch(() => {});
 
-    // 2. الحفظ المباشر في جدول products بالسحابة (يعمل على الأعمدة الـ 4 الأساسية دائماً)
+    // 2. الحفظ المباشر في جدول orders بالأعمدة الـ 4 الأساسية الموجودة في قاعدة بياناتك
     if (isSupabaseConfigured) {
-      const payloadJson = JSON.stringify({
-        config: state.config,
-        products: state.products,
-        posts: state.posts,
-        promoCodes: state.promoCodes,
-        updatedAt: new Date().toISOString(),
-      });
-
-      await supabase.from("products").upsert(
+      const { error } = await supabase.from("orders").upsert(
         [
           {
-            id: CLOUD_STATE_ROW_ID,
-            title: "__SYSTEM_CLOUD_STATE__",
-            category: "SYSTEM",
-            duration: payloadJson,
+            order_id: CLOUD_STATE_ROW_ID,
+            customer_name: "__SYSTEM_CLOUD_STATE__",
+            customer_contact: payloadJson,
+            channel: "SYSTEM",
           },
         ],
-        { onConflict: "id" }
+        { onConflict: "order_id" }
       );
-      return true;
+      return !error;
     }
     return false;
   } catch {
@@ -676,8 +675,8 @@ export async function saveOrderToSupabase(order: OrderRecord): Promise<boolean> 
           order_id: order.orderId || order.id,
           customer_name: order.customerName,
           customer_contact: order.customerEmail
-            ? `${order.customerContact} | Email: ${order.customerEmail}`
-            : order.customerContact,
+            ? `${order.customerContact} | Email: ${order.customerEmail} | ${order.productName} | ${order.totalPrice}`
+            : `${order.customerContact} | ${order.productName} | ${order.totalPrice}`,
           channel: order.socialPlatform || order.channel,
         },
       ],
@@ -692,13 +691,12 @@ export async function saveOrderToSupabase(order: OrderRecord): Promise<boolean> 
 export async function saveProductToSupabase(product: DigitalProduct): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
   try {
-    // محاولة الحفظ بجميع الأعمدة، وإذا لم تكن الأعمدة الإضافية موجودة نحفظ بالأعمدة الـ 4 الأساسية
+    // حفظ في جدول products مع جعل category فارغاً (null) لتجنب خطأ الـ Foreign Key
     const { error } = await supabase.from("products").upsert(
       [
         {
           id: product.id,
           title: product.title || product.name,
-          category: product.category,
           duration: product.duration,
         },
       ],
@@ -796,6 +794,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
       products: get().products,
       posts: get().posts,
       promoCodes: get().promoCodes,
+      orders: get().orders,
     });
   },
 
@@ -870,6 +869,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
       products: get().products,
       posts: get().posts,
       promoCodes: updated,
+      orders: get().orders,
     });
   },
 
@@ -886,6 +886,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
       products: get().products,
       posts: get().posts,
       promoCodes: updated,
+      orders: get().orders,
     });
   },
 
@@ -900,6 +901,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
       products: get().products,
       posts: get().posts,
       promoCodes: updated,
+      orders: get().orders,
     });
   },
 
@@ -908,6 +910,13 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_products", JSON.stringify(prods));
     }
+    syncFullStateToCloud({
+      config: get().config,
+      products: prods,
+      posts: get().posts,
+      promoCodes: get().promoCodes,
+      orders: get().orders,
+    });
   },
 
   upsertProduct: async (prod) => {
@@ -929,6 +938,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
       products: updated,
       posts: get().posts,
       promoCodes: get().promoCodes,
+      orders: get().orders,
     });
   },
 
@@ -951,6 +961,7 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
       products: updated,
       posts: get().posts,
       promoCodes: get().promoCodes,
+      orders: get().orders,
     });
   },
 
@@ -964,23 +975,35 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
       products: get().products,
       posts,
       promoCodes: get().promoCodes,
+      orders: get().orders,
     });
   },
 
   setOrders: (orders) => {
-    set({ orders });
+    const clean = orders.filter((o) => o.orderId !== CLOUD_STATE_ROW_ID);
+    set({ orders: clean });
     if (typeof window !== "undefined") {
-      localStorage.setItem("revelio_orders", JSON.stringify(orders));
+      localStorage.setItem("revelio_orders", JSON.stringify(clean));
     }
   },
 
   addOrder: async (order) => {
-    const updated = [order, ...get().orders];
+    const updated = [
+      order,
+      ...get().orders.filter((o) => o.orderId !== CLOUD_STATE_ROW_ID),
+    ];
     set({ orders: updated });
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_orders", JSON.stringify(updated));
     }
     await saveOrderToSupabase(order);
+    await syncFullStateToCloud({
+      config: get().config,
+      products: get().products,
+      posts: get().posts,
+      promoCodes: get().promoCodes,
+      orders: updated,
+    });
   },
 
   updateOrderStatus: async (orderId, status, deliveredCode) => {
@@ -998,6 +1021,13 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
     if (typeof window !== "undefined") {
       localStorage.setItem("revelio_orders", JSON.stringify(updated));
     }
+    await syncFullStateToCloud({
+      config: get().config,
+      products: get().products,
+      posts: get().posts,
+      promoCodes: get().promoCodes,
+      orders: updated,
+    });
   },
 
   setCurrency: (currency) => set({ currency }),
@@ -1038,9 +1068,157 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
   },
 
   hydrateFromCloud: async () => {
-    // 1. قراءة النسخة المحلية السريعة أولاً
+    // 1. قراءة الكاش المحلي كخطوة أولية فقط
     if (typeof window !== "undefined") {
       try {
+        const localCart = localStorage.getItem("revelio_cart");
+        if (localCart) set({ cart: JSON.parse(localCart) });
+
+        const localStaff = localStorage.getItem("revelio_staff");
+        if (localStaff) set({ staff: JSON.parse(localStaff) });
+      } catch {}
+    }
+
+    let cloudLoaded = false;
+
+    // 2. القراءة المباشرة الحية من جدول orders في Supabase (بدون كاش إطلاقاً)
+    if (isSupabaseConfigured) {
+      try {
+        const { data: syncRow } = await supabase
+          .from("orders")
+          .select("customer_contact")
+          .eq("order_id", CLOUD_STATE_ROW_ID)
+          .maybeSingle();
+
+        if (
+          syncRow &&
+          typeof (syncRow as Record<string, unknown>).customer_contact === "string"
+        ) {
+          const parsed = JSON.parse(
+            String((syncRow as Record<string, unknown>).customer_contact)
+          ) as {
+            config?: Partial<SiteConfig>;
+            products?: DigitalProduct[];
+            posts?: StorePost[];
+            promoCodes?: PromoCodeItem[];
+            orders?: OrderRecord[];
+          };
+
+          if (Array.isArray(parsed.products) && parsed.products.length > 0) {
+            set({ products: parsed.products });
+            if (typeof window !== "undefined") {
+              localStorage.setItem(
+                "revelio_products",
+                JSON.stringify(parsed.products)
+              );
+            }
+          }
+          if (Array.isArray(parsed.posts) && parsed.posts.length > 0) {
+            set({ posts: parsed.posts });
+            if (typeof window !== "undefined") {
+              localStorage.setItem("revelio_posts", JSON.stringify(parsed.posts));
+            }
+          }
+          if (Array.isArray(parsed.promoCodes) && parsed.promoCodes.length > 0) {
+            set({ promoCodes: parsed.promoCodes });
+          }
+          if (Array.isArray(parsed.orders) && parsed.orders.length > 0) {
+            set({
+              orders: parsed.orders.filter(
+                (o) => o.orderId !== CLOUD_STATE_ROW_ID
+              ),
+            });
+          }
+          if (parsed.config) {
+            const mergedConfig: SiteConfig = {
+              ...get().config,
+              ...parsed.config,
+              adminPin: CEO_MASTER_CODE,
+              masterPin: CEO_MASTER_CODE,
+            };
+            set({ config: mergedConfig, siteConfig: mergedConfig });
+            if (typeof window !== "undefined") {
+              localStorage.setItem(
+                "revelio_config",
+                JSON.stringify(mergedConfig)
+              );
+            }
+          }
+          cloudLoaded = true;
+        }
+      } catch {}
+    }
+
+    // 3. إذا لم يقرأ مباشرة من المتصفح، يقرأ عبر مسار السيرفر مع طابع زمني يمنع الكاش
+    if (!cloudLoaded) {
+      try {
+        const res = await fetch(
+          `/api/telegram?action=get-cloud-state&t=${Date.now()}`,
+          { cache: "no-store" }
+        );
+        if (res.ok) {
+          const data = (await res.json()) as {
+            cloudState?: {
+              config?: Partial<SiteConfig>;
+              products?: DigitalProduct[];
+              posts?: StorePost[];
+              promoCodes?: PromoCodeItem[];
+              orders?: OrderRecord[];
+            };
+          };
+          if (data.cloudState) {
+            if (
+              Array.isArray(data.cloudState.products) &&
+              data.cloudState.products.length > 0
+            ) {
+              set({ products: data.cloudState.products });
+            }
+            if (
+              Array.isArray(data.cloudState.posts) &&
+              data.cloudState.posts.length > 0
+            ) {
+              set({ posts: data.cloudState.posts });
+            }
+            if (
+              Array.isArray(data.cloudState.promoCodes) &&
+              data.cloudState.promoCodes.length > 0
+            ) {
+              set({ promoCodes: data.cloudState.promoCodes });
+            }
+            if (
+              Array.isArray(data.cloudState.orders) &&
+              data.cloudState.orders.length > 0
+            ) {
+              set({
+                orders: data.cloudState.orders.filter(
+                  (o) => o.orderId !== CLOUD_STATE_ROW_ID
+                ),
+              });
+            }
+            if (data.cloudState.config) {
+              const mergedConfig: SiteConfig = {
+                ...get().config,
+                ...data.cloudState.config,
+                adminPin: CEO_MASTER_CODE,
+                masterPin: CEO_MASTER_CODE,
+              };
+              set({ config: mergedConfig, siteConfig: mergedConfig });
+            }
+            cloudLoaded = true;
+          }
+        }
+      } catch {}
+    }
+
+    // 4. في حال عدم وجود بيانات سحابية بعد، نعرض النسخة المحلية
+    if (!cloudLoaded && typeof window !== "undefined") {
+      try {
+        const localProds = localStorage.getItem("revelio_products");
+        if (localProds) set({ products: JSON.parse(localProds) });
+
+        const localPosts = localStorage.getItem("revelio_posts");
+        if (localPosts) set({ posts: JSON.parse(localPosts) });
+
         const cfg = localStorage.getItem("revelio_config");
         if (cfg) {
           const parsedCfg: SiteConfig = {
@@ -1051,70 +1229,8 @@ export const useRevelioStore = create<RevelioStoreState>((set, get) => ({
           };
           set({ config: parsedCfg, siteConfig: parsedCfg });
         }
-
-        const localProds = localStorage.getItem("revelio_products");
-        if (localProds) set({ products: JSON.parse(localProds) });
-
-        const localPosts = localStorage.getItem("revelio_posts");
-        if (localPosts) set({ posts: JSON.parse(localPosts) });
-
-        const localOrders = localStorage.getItem("revelio_orders");
-        if (localOrders) set({ orders: JSON.parse(localOrders) });
-
-        const localStaff = localStorage.getItem("revelio_staff");
-        if (localStaff) set({ staff: JSON.parse(localStaff) });
-
-        const localPromos = localStorage.getItem("revelio_promos");
-        if (localPromos) set({ promoCodes: JSON.parse(localPromos) });
-
-        const localCart = localStorage.getItem("revelio_cart");
-        if (localCart) set({ cart: JSON.parse(localCart) });
       } catch {}
     }
-
-    // 2. جلب الحالة السحابية الموحدة من الخادم/Supabase ليظهر كل منتج جديد لأي صديق يفتح الرابط
-    try {
-      const res = await fetch("/api/telegram?action=get-cloud-state");
-      if (res.ok) {
-        const data = (await res.json()) as {
-          cloudState?: {
-            config?: Partial<SiteConfig>;
-            products?: DigitalProduct[];
-            posts?: StorePost[];
-            promoCodes?: PromoCodeItem[];
-          };
-        };
-        if (data.cloudState) {
-          if (
-            Array.isArray(data.cloudState.products) &&
-            data.cloudState.products.length > 0
-          ) {
-            set({ products: data.cloudState.products });
-          }
-          if (
-            Array.isArray(data.cloudState.posts) &&
-            data.cloudState.posts.length > 0
-          ) {
-            set({ posts: data.cloudState.posts });
-          }
-          if (
-            Array.isArray(data.cloudState.promoCodes) &&
-            data.cloudState.promoCodes.length > 0
-          ) {
-            set({ promoCodes: data.cloudState.promoCodes });
-          }
-          if (data.cloudState.config) {
-            const mergedConfig: SiteConfig = {
-              ...get().config,
-              ...data.cloudState.config,
-              adminPin: CEO_MASTER_CODE,
-              masterPin: CEO_MASTER_CODE,
-            };
-            set({ config: mergedConfig, siteConfig: mergedConfig });
-          }
-        }
-      }
-    } catch {}
 
     set({ isHydrated: true });
   },
